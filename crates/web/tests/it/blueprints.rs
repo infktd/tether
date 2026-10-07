@@ -1072,3 +1072,85 @@ async fn owners_a_run_cannot_reach_are_read_a_minute_later(db: PgPool) {
     .unwrap();
     assert_eq!(error, None);
 }
+
+/// A large industry corporation's library: 8,000 blueprints, more than
+/// one call to the host may store or read back at once. All are stored,
+/// all are placed, and those a later read doesn't list go.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn thousands_of_blueprints_are_stored_and_placed(db: PgPool) {
+    let h = harness(db, true).await;
+    let mount_library = |count: i64, priority: u8| {
+        let server = &h.esi_server;
+        async move {
+            let pages = (count + 999) / 1000;
+            for page in 1..=pages {
+                let list: Vec<serde_json::Value> = ((page - 1) * 1000..(page * 1000).min(count))
+                    .map(|i| blueprint(10_000 + i, RIFTER_BP, CONTAINER, "Unlocked", 10))
+                    .collect();
+                Mock::given(method("GET"))
+                    .and(path(format!("/corporations/{CORP}/blueprints")))
+                    .and(wiremock::matchers::query_param("page", page.to_string()))
+                    .respond_with(
+                        ResponseTemplate::new(200)
+                            .insert_header("x-pages", pages.to_string())
+                            .set_body_json(serde_json::json!(list)),
+                    )
+                    .with_priority(priority)
+                    .mount(server)
+                    .await;
+            }
+            Mock::given(method("GET"))
+                .and(path(format!("/corporations/{CORP}/assets")))
+                .respond_with(paged(serde_json::json!([
+                    asset(OFFICE_JITA, 27, "OfficeFolder", JITA, "station"),
+                    asset(CONTAINER, 17366, "CorpSAG2", OFFICE_JITA, "item"),
+                ])))
+                .mount(server)
+                .await;
+        }
+    };
+    mount_library(8_000, 5).await;
+    mount_world(&h).await;
+    let owner = set_up(&h).await;
+    sync(&h).await;
+    let schema: String =
+        sqlx::query_scalar("SELECT schema_name FROM core.plugin_storage WHERE plugin_id = $1")
+            .bind(ID)
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    let count = |sql: &str| {
+        let sql = sql.replace("{schema}", &schema);
+        let db = h.db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql))
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+    assert_eq!(
+        count(r#"SELECT count(*) FROM "{schema}".blueprints"#).await,
+        8_000
+    );
+    assert_eq!(
+        count(&format!(
+            r#"SELECT count(*) FROM "{{schema}}".blueprints WHERE place_id = {JITA}"#
+        ))
+        .await,
+        8_000
+    );
+    let library = page(&h, &format!("/plugins/{ID}"), &owner).await;
+    assert!(
+        !library.body.contains("The last read had a problem"),
+        "{}",
+        library.body
+    );
+    // The next read lists fewer: the rest go.
+    mount_library(1_500, 1).await;
+    run_schedule(&h, "sync_blueprints").await;
+    assert_eq!(
+        count(r#"SELECT count(*) FROM "{schema}".blueprints"#).await,
+        1_500
+    );
+}

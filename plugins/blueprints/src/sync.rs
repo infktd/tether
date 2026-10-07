@@ -137,6 +137,23 @@ fn forget_gone(owners: &[Owner], lapsed: &[i64]) -> Result<(), JobError> {
     Ok(())
 }
 
+/// The owner's row, before its blueprints are stored (they refer to it);
+/// whether and when it was read is noted after, by [`note_owner`].
+fn ensure_owner(owner: &Owner) -> Result<(), storage::Error> {
+    storage::execute(
+        "INSERT INTO owners (kind, id, name, corporation_id, alliance_id) \
+         VALUES ($1, $2, $3, $4, $5) ON CONFLICT (kind, id) DO NOTHING",
+        &[
+            owner.kind.into(),
+            owner.id.into(),
+            owner.name.clone().into(),
+            owner.corporation_id.into(),
+            owner.alliance_id.into(),
+        ],
+    )?;
+    Ok(())
+}
+
 fn note_owner(owner: &Owner, error: Option<String>) -> Result<(), JobError> {
     storage::execute(
         "INSERT INTO owners (kind, id, name, corporation_id, alliance_id, read_at, error) \
@@ -193,10 +210,19 @@ pub fn blueprints() -> Result<(), JobError> {
             "character-blueprints"
         };
         match esi::get_all(endpoint, owner.subject, &[]) {
-            Ok(bodies) => {
-                note_owner(owner, None)?;
-                store_blueprints(owner, &pages(bodies))?;
-            }
+            // Read, then stored: only then is the owner read. One that
+            // can't be stored is that owner's problem, not the run's.
+            Ok(bodies) => match ensure_owner(owner)
+                .and_then(|()| store_blueprints(owner, &pages(bodies)))
+            {
+                Ok(()) => note_owner(owner, None)?,
+                Err(err) => {
+                    log::warn(format!("{}: blueprints not stored: {err:?}", who(owner)));
+                    let why = "Tether's storage refused them (the app's log says why)".to_owned();
+                    problems.push(format!("{}: blueprints not stored: {why}", who(owner)));
+                    note_owner(owner, Some(why))?;
+                }
+            },
             Err(err) => {
                 let why = esi::describe(&err);
                 problems.push(format!("{}: blueprints not read: {why}", who(owner)));
@@ -210,10 +236,16 @@ pub fn blueprints() -> Result<(), JobError> {
     set_error("blueprints_at", &problems)
 }
 
+/// Blueprints stored at once: a row is about 150 bytes of the host's
+/// 1 MiB of parameters a call.
+const BLUEPRINTS_PER_STORE: usize = 1_000;
+
 /// Replaces the owner's blueprints with what ESI said: those gone go
 /// (with their requests, as in AA), the rest are updated. A blueprint
-/// that moved to another owner moves with it.
-fn store_blueprints(owner: &Owner, list: &[serde_json::Value]) -> Result<(), JobError> {
+/// that moved to another owner moves with it. Stored a thousand at a
+/// time, each marked with this read (`seen`), so a library of tens of
+/// thousands fits; those this read didn't see go once all are stored.
+fn store_blueprints(owner: &Owner, list: &[serde_json::Value]) -> Result<(), storage::Error> {
     let rows: Vec<serde_json::Value> = list
         .iter()
         .filter_map(|b| {
@@ -231,22 +263,14 @@ fn store_blueprints(owner: &Owner, list: &[serde_json::Value]) -> Result<(), Job
             }))
         })
         .collect();
-    let ids: Vec<i64> = rows.iter().filter_map(|r| r["item_id"].as_i64()).collect();
-    storage::transaction(&[
-        storage::Statement::new(
-            "DELETE FROM blueprints WHERE owner_kind = $1 AND owner_id = $2 \
-             AND NOT (item_id = ANY(SELECT jsonb_array_elements_text($3::jsonb)::bigint))",
-            vec![
-                owner.kind.into(),
-                owner.id.into(),
-                Db::json(serde_json::json!(ids).to_string()),
-            ],
-        ),
-        storage::Statement::new(
+    // This read, told apart from the owner's earlier ones.
+    let read = chrono::Utc::now().timestamp_micros();
+    for chunk in rows.chunks(BLUEPRINTS_PER_STORE) {
+        storage::execute(
             "INSERT INTO blueprints (item_id, owner_kind, owner_id, type_id, location_id, \
-                 location_flag, quantity, runs, material_efficiency, time_efficiency) \
+                 location_flag, quantity, runs, material_efficiency, time_efficiency, seen) \
              SELECT DISTINCT ON (item_id) item_id, $2, $3, type_id, location_id, location_flag, \
-                 quantity, runs, me, te \
+                 quantity, runs, me, te, $4 \
              FROM json_to_recordset($1::json) AS x(item_id bigint, type_id bigint, \
                  location_id bigint, location_flag text, quantity integer, runs integer, \
                  me integer, te integer) \
@@ -261,15 +285,20 @@ fn store_blueprints(owner: &Owner, list: &[serde_json::Value]) -> Result<(), Job
                  location_id = EXCLUDED.location_id, location_flag = EXCLUDED.location_flag, \
                  quantity = EXCLUDED.quantity, runs = EXCLUDED.runs, \
                  material_efficiency = EXCLUDED.material_efficiency, \
-                 time_efficiency = EXCLUDED.time_efficiency",
-            vec![
-                Db::json(serde_json::Value::Array(rows).to_string()),
+                 time_efficiency = EXCLUDED.time_efficiency, seen = EXCLUDED.seen",
+            &[
+                Db::json(serde_json::Value::Array(chunk.to_vec()).to_string()),
                 owner.kind.into(),
                 owner.id.into(),
+                read.into(),
             ],
-        ),
-    ])
-    .map_err(|e| retry("storing blueprints", e))?;
+        )?;
+    }
+    storage::execute(
+        "DELETE FROM blueprints WHERE owner_kind = $1 AND owner_id = $2 \
+         AND seen IS DISTINCT FROM $3",
+        &[owner.kind.into(), owner.id.into(), read.into()],
+    )?;
     Ok(())
 }
 
