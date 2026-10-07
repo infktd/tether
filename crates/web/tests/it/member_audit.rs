@@ -1715,6 +1715,43 @@ async fn a_big_hangar_is_stored_whole(db: PgPool) {
     assert!(whole);
 }
 
+/// Two characters colonising one planet that isn't named yet: it's named
+/// once, and the run goes on past naming places (an upsert naming it
+/// twice failed every run).
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_planet_two_characters_colonise_is_named(db: PgPool) {
+    let (h, _) = synced(db).await;
+    member_account(&h, &[(CORP_MATE, "Corp Mate", 98133756, Some(1695357456))]).await;
+    // Read already (so nothing but the names is asked), with a colony on
+    // Chribba's planet.
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        r#"INSERT INTO "plugin_tether.member-audit".section_syncs (character_id, section, synced_at, ok)
+             SELECT {CORP_MATE}, section, now(), true FROM "plugin_tether.member-audit".section_syncs
+             WHERE character_id = {CHRIBBA};
+           INSERT INTO "plugin_tether.member-audit".planets
+             (character_id, planet_id, solar_system_id, planet_type, upgrade_level, pins, last_update)
+             VALUES ({CORP_MATE}, {PLANET}, {JITA}, 'temperate', 1, 3, now());
+           DELETE FROM "plugin_tether.member-audit".names WHERE id = {PLANET};
+           DELETE FROM "plugin_tether.member-audit".unnamed WHERE id = {PLANET};"#
+    )))
+    .execute(&h.db)
+    .await
+    .unwrap();
+    sync(&h).await;
+    let name: Option<String> =
+        sqlx::query_scalar(r#"SELECT name FROM "plugin_tether.member-audit".names WHERE id = $1"#)
+            .bind(PLANET)
+            .fetch_optional(&h.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        name.as_deref(),
+        Some("Jita IV"),
+        "{:?}",
+        plugin_warnings(&h).await
+    );
+}
+
 /// aa-memberaudit's sharing: a pilot with `share_characters` shares their
 /// own character from its sheet, and holders of `view_shared_characters`
 /// (recruiters) find it and open it, mail included and audited, until it

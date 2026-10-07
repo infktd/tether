@@ -1364,19 +1364,24 @@ fn name_places(run: &mut Run) -> Result<(), JobError> {
     )
     .map_err(|e| retry("finding unnamed structures", e))?;
     structures.extend(earlier.rows.iter().map(|r| (int(r, 0), int(r, 1))));
+    // One row a planet, with any character colonising it: several
+    // characters may share a planet.
     let planets = storage::query(
-        "SELECT DISTINCT p.planet_id, p.character_id FROM planets p \
+        "SELECT DISTINCT ON (p.planet_id) p.planet_id, p.character_id FROM planets p \
          WHERE NOT EXISTS (SELECT 1 FROM names n WHERE n.id = p.planet_id) \
            AND NOT EXISTS (SELECT 1 FROM unnamed u WHERE u.id = p.planet_id AND u.tried_at > now() - interval '7 days') \
-         LIMIT 10",
+         ORDER BY p.planet_id LIMIT 10",
         &[],
     )
     .map_err(|e| retry("finding unnamed planets", e))?;
     let mut tried = Vec::new();
     let mut named = Vec::new();
     for (structure, character) in structures.into_iter().take(10) {
-        if run.calls <= NAME_RESERVE / 2 || tried.contains(&structure) {
+        if run.calls <= NAME_RESERVE / 2 {
             break;
+        }
+        if tried.contains(&structure) {
+            continue;
         }
         tried.push(structure);
         match run.json::<Json>(
@@ -1397,6 +1402,9 @@ fn name_places(run: &mut Run) -> Result<(), JobError> {
             break;
         }
         let (planet, character) = (int(row, 0), int(row, 1));
+        if tried.contains(&planet) {
+            continue;
+        }
         tried.push(planet);
         match run.json::<Json>(
             "universe-planet",
@@ -1409,15 +1417,16 @@ fn name_places(run: &mut Run) -> Result<(), JobError> {
         }
     }
     let tried: Vec<Json> = tried.iter().map(|id| json!({ "id": id })).collect();
+    // Each id once: an upsert can't touch a row twice.
     storage::transaction(&[
         stmt(
             "INSERT INTO names (id, name, category) \
-             SELECT id, name, category FROM json_to_recordset($1::json) AS x(id bigint, name text, category text) \
+             SELECT DISTINCT ON (id) id, name, category FROM json_to_recordset($1::json) AS x(id bigint, name text, category text) \
              WHERE name IS NOT NULL ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name",
             vec![rows(named)],
         ),
         stmt(
-            "INSERT INTO unnamed (id, tried_at) SELECT id, now() FROM json_to_recordset($1::json) AS x(id bigint) \
+            "INSERT INTO unnamed (id, tried_at) SELECT DISTINCT id, now() FROM json_to_recordset($1::json) AS x(id bigint) \
              WHERE NOT EXISTS (SELECT 1 FROM names n WHERE n.id = x.id) \
              ON CONFLICT (id) DO UPDATE SET tried_at = now()",
             vec![rows(tried)],
