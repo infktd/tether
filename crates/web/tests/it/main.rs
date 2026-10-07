@@ -33,6 +33,7 @@ mod jobs;
 mod maintenance;
 mod member_audit;
 mod menu;
+mod metrics;
 mod moon_mining;
 mod notifications;
 mod openapi;

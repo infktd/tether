@@ -381,6 +381,17 @@ impl Plugins {
         running
     }
 
+    /// How many apps run, and how many are enabled but failed to load
+    /// (for `/metrics`).
+    pub fn counts(&self) -> (usize, usize) {
+        let slots = self.slots.read().unwrap_or_else(|e| e.into_inner());
+        let running = slots
+            .values()
+            .filter(|slot| matches!(slot, Slot::Running(_)))
+            .count();
+        (running, slots.len() - running)
+    }
+
     /// The running apps with a page an account holding what `holds` says
     /// may open ([`may_open`]): whose changes its live stream announces.
     pub fn watchable(

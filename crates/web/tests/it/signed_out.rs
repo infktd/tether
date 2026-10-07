@@ -312,10 +312,11 @@ fn every_route() -> Vec<String> {
 
 /// What a signed-out browser may reach once Tether is set up: the way in
 /// (logging in and EVE's and Discord's callbacks, which check their own
-/// state), logging out, what the login page draws with, and the
-/// container's health checks. Each with the answer it gives without a
-/// session; anything else must send to log in (or 401 for the API, or
-/// 405 for a method the route doesn't take).
+/// state), logging out, what the login page draws with, the container's
+/// health checks, and the metrics endpoint (its own bearer token). Each
+/// with the answer it gives without a session; anything else must send to
+/// log in (or 401 for the API, or 405 for a method the route doesn't
+/// take).
 const THE_WAY_IN: &[(&str, &str, u16)] = &[
     ("GET", "/login", 200),
     ("GET", "/auth/login", 303),
@@ -324,6 +325,8 @@ const THE_WAY_IN: &[(&str, &str, u16)] = &[
     ("POST", "/auth/logout", 303),
     ("GET", "/health", 200),
     ("GET", "/ready", 200),
+    // Off unless METRICS_ENABLED (then only with METRICS_TOKEN).
+    ("GET", "/metrics", 404),
     ("GET", "/theme.css", 200),
     // An asset that doesn't exist.
     ("GET", "/static/1", 404),

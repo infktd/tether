@@ -31,6 +31,8 @@ pub struct AppState {
     pub strip: Arc<StripStatus>,
     /// Where upgrades from the console go ([`crate::upgrader`]).
     pub updater: Arc<crate::upgrader::Updater>,
+    /// Whether `/metrics` answers, and to which token ([`crate::metrics`]).
+    pub metrics: Arc<crate::metrics::Metrics>,
 }
 
 /// What the status strip shows, asked of ESI at most once a minute however

@@ -225,7 +225,26 @@ pub async fn checks(env: &Env) -> Vec<Check> {
     checks.push(snapshots(&env.db, &env.snapshot_dir, env.pg_bin_dir.clone()).await);
     checks.push(backups(&env.snapshot_dir).await);
     checks.push(updater(&tether_web::upgrader::Updater::from_env()));
+    checks.push(metrics(tether_web::metrics::Metrics::from_env()));
     checks
+}
+
+/// The optional `/metrics` endpoint: off, on with its token, or a setting
+/// the server refuses to start with.
+pub fn metrics(setting: Result<tether_web::metrics::Metrics, String>) -> Check {
+    const NAME: &str = "metrics";
+    match setting {
+        Ok(m) if m.enabled() => Check::ok(
+            NAME,
+            "on: /metrics answers only requests with Authorization: Bearer <METRICS_TOKEN>",
+        ),
+        Ok(_) => Check::ok(NAME, "off: /metrics answers 404 (METRICS_ENABLED)"),
+        Err(why) => Check::fail(
+            NAME,
+            why,
+            "Fix METRICS_ENABLED and METRICS_TOKEN in deploy/.env (deploy/README.md, Metrics),              then docker compose up -d",
+        ),
+    }
 }
 
 /// Upgrades from the console: whether the updater container runs.

@@ -272,6 +272,63 @@ docker compose -f deploy/docker-compose.yml exec app tether doctor
 checks ports 80 and 443 and HTTPS against the public URL, and fits its
 fixes to the proxy (port 80 is only required with Caddy).
 
+## Metrics
+
+Tether can serve Prometheus metrics at `/metrics`. It's off unless you
+turn it on: until then `/metrics` answers 404, like any address that
+doesn't exist. To turn it on, add two lines to `deploy/.env`:
+
+```bash
+METRICS_ENABLED=true
+METRICS_TOKEN=<at least 32 characters; openssl rand -hex 32 makes one>
+```
+
+then `(cd deploy && docker compose up -d)`. Tether refuses to start with
+`METRICS_ENABLED=true` and no token, a short one, or a value it doesn't
+know, and `doctor` says whether metrics are on.
+
+Once on, `/metrics` answers only a request carrying
+`Authorization: Bearer <METRICS_TOKEN>`; anything else still gets the
+404. It's served through your proxy like every page, so scrape
+`https://<domain>/metrics`. With Prometheus, keep the token in a file
+only Prometheus can read:
+
+```yaml
+scrape_configs:
+  - job_name: tether
+    scheme: https
+    metrics_path: /metrics
+    authorization:
+      credentials_file: /etc/prometheus/tether-metrics-token
+    static_configs:
+      - targets: ["alliance.example.com"]
+```
+
+What it shows, all counts and states of the instance (no names, nothing
+about any one pilot):
+
+| Metric | What it is |
+| --- | --- |
+| `tether_build_info{version,revision}` | Always 1; the running build |
+| `tether_jobs{state}` | Background jobs by state: queued, running, succeeded, dead |
+| `tether_apps{status}` | Enabled apps running, or failed to load |
+| `tether_esi_error_limit_remain` | Errors ESI still accepts this window (once ESI has said) |
+| `tether_esi_error_limit_reset_seconds` | Seconds until that window resets |
+| `tether_esi_error_limit_lowest_remain` | The fewest left at any point since start |
+| `tether_esi_rate_limit_groups_held` | ESI rate-limit groups waiting out a 429 |
+| `tether_esi_throttled` | 1 while background syncs wait for ESI's budget |
+| `tether_esi_responses_total{outcome}` | ESI responses since start: ok, cached, not_modified, client_error, server_error, error_limited (must stay 0), rate_limited, transport_error |
+| `tether_discord_configured` | 1 when Discord is set up |
+| `tether_discord_sync_failing` | 1 when the last full role sync gave up |
+| `tether_discord_last_sync_timestamp_seconds` | When the last full role sync finished |
+| `tether_accounts{state_id,kind}` | Active accounts by state: kind is member, blue, guest, blacklist or custom; states by id, never by name |
+| `tether_accounts_deactivated` | Deactivated accounts |
+| `tether_db_pool_connections{state}` | The database pool's connections, in_use or idle |
+| `tether_db_pool_max_connections` | The pool's size limit |
+
+To turn it off again, remove the lines (or set `METRICS_ENABLED=false`)
+and run `docker compose up -d`. Change the token the same way.
+
 ## Releasing
 
 For maintainers. CI (`.github/workflows/ci.yml`) publishes the image

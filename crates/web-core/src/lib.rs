@@ -26,6 +26,7 @@ pub mod error;
 pub mod groups;
 pub mod maintenance;
 pub mod menu;
+pub mod metrics;
 pub mod notifications;
 pub mod ownership;
 pub mod pages;

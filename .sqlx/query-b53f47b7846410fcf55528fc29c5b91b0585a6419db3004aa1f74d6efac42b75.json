@@ -1,0 +1,45 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT s.id AS state_id, s.builtin, count(a.id) AS \"accounts!\"\n        FROM core.states s\n        LEFT JOIN core.accounts a ON a.state_id = s.id AND a.active\n        GROUP BY s.id, s.builtin\n        ORDER BY s.id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "state_id",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "core.states",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "builtin",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "core.states",
+            "name": "builtin"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "accounts!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      true,
+      null
+    ]
+  },
+  "hash": "b53f47b7846410fcf55528fc29c5b91b0585a6419db3004aa1f74d6efac42b75"
+}

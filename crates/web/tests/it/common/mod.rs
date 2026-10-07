@@ -240,6 +240,9 @@ impl Sso for FakeSso {
 
 pub struct Harness {
     pub app: Router,
+    /// What `app` was built from, for a test that needs another router
+    /// with one thing changed.
+    pub state: AppState,
     pub db: PgPool,
     pub esi: Esi,
     pub sso: Arc<FakeSso>,
@@ -484,7 +487,8 @@ async fn harness_parts(
         image: Some("ghcr.io/acme/tether:edge".to_owned()),
         revision: None,
     });
-    let app = router(AppState {
+    let state = AppState {
+        metrics: Arc::default(),
         updater: updater.clone(),
         key: test_key(),
         discord: discord.clone(),
@@ -498,9 +502,11 @@ async fn harness_parts(
         plugins: plugins.clone(),
         notices: tether_web::notifications::Notices::start(db.clone()),
         strip: Default::default(),
-    });
+    };
+    let app = router(state.clone());
     Harness {
         app,
+        state,
         db,
         esi,
         sso,

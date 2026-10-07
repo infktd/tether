@@ -442,6 +442,25 @@ fn doctor_names_the_proxy_and_whose_certificates_they_are() {
     assert!(unknown.fix.unwrap().contains("--proxy"));
 }
 
+#[test]
+fn doctor_metrics() {
+    use tether_core::Secret;
+    use tether_web::metrics::Metrics;
+    let off = doctor::metrics(Metrics::from_values(None, None));
+    assert_eq!(off.status, Status::Ok);
+    assert!(off.detail.starts_with("off"), "{off:?}");
+    let token = Secret::new("m".repeat(48));
+    let on = doctor::metrics(Metrics::from_values(Some("true"), Some(&token)));
+    assert_eq!(on.status, Status::Ok);
+    assert!(on.detail.starts_with("on"), "{on:?}");
+    assert!(!on.detail.contains("mmmm"), "never the token: {on:?}");
+    let short = Secret::new("hunter2".to_owned());
+    let bad = doctor::metrics(Metrics::from_values(Some("true"), Some(&short)));
+    assert_eq!(bad.status, Status::Fail);
+    assert!(!bad.detail.contains("hunter2"), "{bad:?}");
+    assert!(bad.fix.unwrap().contains("METRICS_TOKEN"));
+}
+
 #[tokio::test]
 async fn doctor_esi() {
     let (_server, esi) = mock_esi().await;

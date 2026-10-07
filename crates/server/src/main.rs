@@ -184,6 +184,13 @@ fn outbound(user_agent: &str) -> anyhow::Result<tether_net::Outbound> {
 
 async fn serve(config: ServeConfig) -> anyhow::Result<()> {
     config.validate().map_err(anyhow::Error::msg)?;
+    // Off unless METRICS_ENABLED; a bad setting stops startup rather than
+    // leaving it open or silently off. The error never names the token.
+    let metrics =
+        std::sync::Arc::new(tether_web::metrics::Metrics::from_env().map_err(anyhow::Error::msg)?);
+    if metrics.enabled() {
+        tracing::info!("metrics: /metrics answers scrapers with METRICS_TOKEN");
+    }
     if tether_web::DEV_LOGIN {
         tracing::warn!("dev-login is compiled in: /dev/login signs anyone in without SSO");
     }
@@ -396,6 +403,7 @@ async fn serve(config: ServeConfig) -> anyhow::Result<()> {
         notices: notices.clone(),
         strip: Default::default(),
         updater,
+        metrics,
         vault,
         key,
         discord,

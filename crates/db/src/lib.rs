@@ -13,6 +13,7 @@ pub mod downloads;
 pub mod esi_cache;
 pub mod groups;
 pub mod menu;
+pub mod metrics;
 pub mod notifications;
 pub mod permissions;
 pub mod permissions_audit;

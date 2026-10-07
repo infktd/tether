@@ -2,7 +2,9 @@
 //!
 //! `.env` in a deployment holds only DOMAIN, POSTGRES_PASSWORD, SETUP_TOKEN
 //! and ENCRYPTION_KEY, plus the reverse proxy choice (TETHER_PROXY and its
-//! compose settings); compose turns those into the variables below.
+//! compose settings); compose turns those into the variables below. An
+//! optional extra an admin adds to `.env` is read where it's used:
+//! `METRICS_ENABLED` and `METRICS_TOKEN` (`tether_web::metrics`).
 //! Everything else is configured in the browser and stored in the database.
 
 use std::net::SocketAddr;

@@ -491,6 +491,9 @@ pub fn router(state: AppState) -> Router {
         .route("/discord/callback", get(pages::discord::callback))
         .route("/health", get(health))
         .route("/ready", get(ready))
+        // Off unless METRICS_ENABLED, then only with METRICS_TOKEN: a 404
+        // otherwise. Not in the API docs.
+        .route("/metrics", get(metrics::endpoint))
         .route("/auth/login", get(auth::login))
         .route("/auth/callback", get(auth::callback))
         .route("/auth/logout", post(auth::logout))
@@ -785,6 +788,7 @@ mod tests {
             notices: crate::notifications::Notices::idle(),
             strip: Default::default(),
             updater: std::sync::Arc::default(),
+            metrics: std::sync::Arc::default(),
         }
     }
 

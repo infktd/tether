@@ -41,6 +41,10 @@ services:
       # Shown on the System page, whose Upgrade card asks the updater for
       # another tag of it.
       TETHER_IMAGE: ${TETHER_IMAGE:-}
+      # Optional Prometheus metrics (deploy/README.md, Metrics): off
+      # unless METRICS_ENABLED=true, then only with METRICS_TOKEN.
+      METRICS_ENABLED: ${METRICS_ENABLED:-false}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
     volumes:
       # Encrypted snapshots (before migrations and app upgrades) and nightly
       # backups, for `tether rollback`. On the same disk as the database:
