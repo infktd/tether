@@ -24,7 +24,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -47,6 +47,14 @@ pub type TokenSource = Arc<
 /// items. A corporation with more isn't read at all (its places would be
 /// wrong or missing), and the call says so.
 pub const MAX_ASSET_PAGES: u32 = 2_000;
+
+/// At most this many reads run at once, each holding its pages' items
+/// until done; others wait their turn.
+const READS_AT_ONCE: usize = 2;
+
+/// Items kept across every read, about 200 MB: past it the oldest reads
+/// go first (a call then reads that corporation again).
+const MAX_KEPT_ITEMS: usize = 4_000_000;
 
 /// Flags of an item held by a station or an Upwell structure: a hangar
 /// office or the corporation's deliveries. The walk up stops at such an
@@ -202,6 +210,41 @@ pub(crate) struct AssetTrees {
     times: Times,
     slots: Mutex<HashMap<(i64, i64), Slot>>,
     reads: AtomicU64,
+    /// Reads under way (at most [`READS_AT_ONCE`]).
+    running: AtomicUsize,
+}
+
+/// A read's place among those running, given back when it ends (panics
+/// included).
+struct Turn<'a>(&'a AtomicUsize);
+
+impl Drop for Turn<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// Past [`MAX_KEPT_ITEMS`] across every kept read, the oldest go (never
+/// `newest`, which was just read).
+fn trim(slots: &mut HashMap<(i64, i64), Slot>, newest: (i64, i64), max: usize) {
+    let mut kept: Vec<((i64, i64), Instant, usize)> = slots
+        .iter()
+        .filter_map(|(key, slot)| match slot {
+            Slot::Read { at, tree, .. } => Some((*key, *at, tree.items.len())),
+            _ => None,
+        })
+        .collect();
+    let mut total: usize = kept.iter().map(|(_, _, n)| n).sum();
+    kept.sort_by_key(|(_, at, _)| *at);
+    for (key, _, n) in kept {
+        if total <= max {
+            break;
+        }
+        if key != newest {
+            slots.remove(&key);
+            total -= n;
+        }
+    }
 }
 
 impl Default for AssetTrees {
@@ -222,6 +265,7 @@ impl AssetTrees {
             times,
             slots: Mutex::default(),
             reads: AtomicU64::new(0),
+            running: AtomicUsize::new(0),
         }
     }
 
@@ -363,7 +407,31 @@ impl Esi {
     async fn read_asset_tree(&self, tokens: TokenSource, key: (i64, i64), read: u64) {
         let (corporation, character) = key;
         let trees = &self.asset_trees;
+        // Its turn, while it's still the read wanted (one taken as lost
+        // meanwhile stops waiting).
+        let turn = loop {
+            let running = trees.running.load(Ordering::Acquire);
+            if running < READS_AT_ONCE
+                && trees
+                    .running
+                    .compare_exchange(running, running + 1, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+            {
+                break Turn(&trees.running);
+            }
+            {
+                let mut slots = trees.slots();
+                match slots.get_mut(&key) {
+                    Some(Slot::Reading { read: r, touched }) if *r == read => {
+                        *touched = Instant::now();
+                    }
+                    _ => return,
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        };
         let result = self.read_assets(&tokens, key, read).await;
+        drop(turn);
         let now = Instant::now();
         let (slot, keep) = match result {
             // Taken as lost meanwhile, and read again: that read answers.
@@ -402,6 +470,7 @@ impl Esi {
                 return;
             }
             slots.insert(key, slot);
+            trim(&mut slots, key, MAX_KEPT_ITEMS);
         }
         tokio::time::sleep(keep).await;
         let mut slots = trees.slots();
@@ -488,6 +557,40 @@ mod tests {
         let mut tree = AssetTree::default();
         tree.add(assets);
         tree
+    }
+
+    /// Past the cap, the oldest kept reads go first, never the newest.
+    #[test]
+    fn the_oldest_reads_go_past_the_cap() {
+        let now = Instant::now();
+        let read = |n: i64, ago: u64| Slot::Read {
+            read: 0,
+            at: now - Duration::from_secs(ago),
+            tree: Arc::new(tree(
+                (0..n)
+                    .map(|i| asset(i, 34, "Hangar", 60003760, "station"))
+                    .collect(),
+            )),
+        };
+        let mut slots = HashMap::new();
+        slots.insert((1, 1), read(4, 30));
+        slots.insert((2, 2), read(4, 20));
+        slots.insert((3, 3), read(4, 10));
+        slots.insert(
+            (4, 4),
+            Slot::Reading {
+                read: 1,
+                touched: now,
+            },
+        );
+        trim(&mut slots, (3, 3), 8);
+        let mut left: Vec<(i64, i64)> = slots.keys().copied().collect();
+        left.sort_unstable();
+        assert_eq!(left, vec![(2, 2), (3, 3), (4, 4)]);
+        // The newest stays even alone past the cap.
+        trim(&mut slots, (3, 3), 1);
+        assert!(slots.contains_key(&(3, 3)));
+        assert!(!slots.contains_key(&(2, 2)));
     }
 
     #[test]
