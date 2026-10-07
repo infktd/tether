@@ -339,7 +339,7 @@ Phase 5, release 1.0:
 - [x] Ship Replacement: the pilot sees their request's history and reject reason (aa-srp `aasrp/views/ajax.py:235`). Done in 0.3.6: Details in My SRP requests opens the pilot's own request (`mine/<id>`, theirs only) with its status, the rejection's reason and the history of decisions, payouts and payments; staff's own comments, and comments from before, stay staff's, and the review page says who sees each
 - [x] Ship Replacement: remove a single request (AA core `srp/views.py:227-250`). Done in 0.3.6: Remove in each request's row and on its page, for `srp_management`, asking first; its comments and card go with it, and its loss can be requested again
 - [x] Ship Replacement: edit a fleet's AAR (AA core `srp/views.py:340-358`). Done in 0.3.6: Edit AAR (Add AAR when there's none) on the fleet's page for `srp_management`, a popup with the report as it is
-- [ ] Ship Replacement: disable and enable a fleet (AA core `srp/views.py:108-129`; aa-srp `aasrp/models.py:109-116`)
+- [x] Ship Replacement: disable and enable a fleet (AA core `srp/views.py:108-129`; aa-srp `aasrp/models.py:109-116`). Done in 0.3.6: Disable and Enable among a fleet's buttons while it isn't completed; a disabled fleet takes no requests (its page and the list say so) and keeps its SRP code, as aa-srp's Closed
 - [ ] Freight: My Alliance keeps only contracts issued by the alliance's members (aa-freight `freight/models/contract_handlers.py:343-344`)
 - [ ] Freight: customer notices only for priced contracts unless notify-all is on (aa-freight `freight/managers.py:428-429`)
 - [ ] Freight: My contracts for `use_calculator`, with aa-freight's statuses (aa-freight `freight/views.py:70-71`, `freight/managers.py:262-272`)

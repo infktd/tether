@@ -5,7 +5,8 @@
 //! - **SRP fleets** (`add_srpfleetmain` or `srp_management` adds them): a
 //!   fleet name, doctrine, fleet commander and EVE time, an after action
 //!   report, and an SRP code pilots request with. Open until SRP managers
-//!   mark them Completed.
+//!   mark them Completed; disabled meanwhile (AA's disable, aa-srp's
+//!   Closed) they take no requests until enabled.
 //! - Everyone with `access_srp` sees the open fleets with their Total ISK
 //!   Cost and pending requests, and opens any fleet's requests (pilots,
 //!   ships, amounts, status), as AA, every one of them, a page at a time.
@@ -279,13 +280,16 @@ struct Fleet {
     aar: String,
     code: String,
     completed: bool,
+    /// AA's disabled fleet (aa-srp's Closed): no requests for now, not
+    /// completed.
+    disabled: bool,
     created_by: String,
 }
 
 const FLEET_COLUMNS: &str = "f.id, f.name, f.doctrine, f.fleet_commander, f.fleet_time, \
-     f.aar, f.srp_code, f.completed, f.created_by_name";
+     f.aar, f.srp_code, f.completed, f.created_by_name, f.disabled";
 const FLEET_SELECT: &str = "SELECT f.id, f.name, f.doctrine, f.fleet_commander, f.fleet_time, \
-     f.aar, f.srp_code, f.completed, f.created_by_name FROM fleets f";
+     f.aar, f.srp_code, f.completed, f.created_by_name, f.disabled FROM fleets f";
 
 fn fleet(row: &[Db]) -> Fleet {
     Fleet {
@@ -297,14 +301,28 @@ fn fleet(row: &[Db]) -> Fleet {
         aar: text(row, 5),
         code: text(row, 6),
         completed: flag(row, 7),
+        disabled: flag(row, 9),
         created_by: text(row, 8),
     }
 }
 
 impl Fleet {
+    /// Why it takes no requests, if it doesn't.
+    fn closed(&self) -> Option<&'static str> {
+        if self.completed {
+            Some("This fleet's SRP is completed: it takes no more requests.")
+        } else if self.disabled {
+            Some("This fleet's SRP is disabled: it takes no requests until SRP staff enable it.")
+        } else {
+            None
+        }
+    }
+
     fn status(&self) -> Badge {
         if self.completed {
             badge("Completed", Tone::Neutral)
+        } else if self.disabled {
+            badge("Disabled", Tone::Warning)
         } else {
             badge("Open", Tone::Success)
         }
@@ -393,7 +411,7 @@ fn srp_fleets(viewer: &Viewer, all: bool) -> Result<Page, PageError> {
         &[FLEET_ROWS.into(), all.into()],
     )?
     .iter()
-    .map(|r| (fleet(r), int(r, 9), float(r, 10).unwrap_or_default()))
+    .map(|r| (fleet(r), int(r, 10), float(r, 11).unwrap_or_default()))
     .collect();
     let columns = vec![
         Column::text("Fleet Name"),
@@ -422,7 +440,7 @@ fn srp_fleets(viewer: &Viewer, all: bool) -> Result<Page, PageError> {
             (*pending).into(),
             isk(*cost),
         ];
-        row.push(if f.completed {
+        row.push(if f.completed || f.disabled {
             "Closed".into()
         } else {
             link("Request SRP", format!("request/{}", f.code)).into()
@@ -647,8 +665,8 @@ fn request_page(code: &str, note: Option<&str>) -> Result<Page, PageError> {
         page = page.text(note);
     }
     page = page.card(about);
-    if f.completed {
-        return Ok(page.text("This fleet's SRP is completed: it takes no more requests."));
+    if let Some(why) = f.closed() {
+        return Ok(page.text(why));
     }
     Ok(page.form(
         Form::new("request", "Request SRP")
@@ -738,8 +756,8 @@ fn request_srp(
 ) -> Result<SubmitResult, PageError> {
     let f = fleet_by_code(code)?;
     let again = |text: &str| Ok(SubmitResult::Page(request_page(code, Some(text))?));
-    if f.completed {
-        return again("This fleet's SRP is completed: it takes no more requests.");
+    if let Some(why) = f.closed() {
+        return again(why);
     }
     let link_text = submission.value("killboard_link").trim().to_owned();
     let Some(link) = killmail::parse_link(&link_text) else {
@@ -838,7 +856,7 @@ fn request_srp(
              character_name, killmail_id, killmail_hash, killboard_link, ship_type_id, ship_name, \
              solar_system_id, killmail_time, kb_total_loss, additional_info, submitter) \
          SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14 \
-         WHERE EXISTS (SELECT 1 FROM fleets WHERE id = $1 AND NOT completed) \
+         WHERE EXISTS (SELECT 1 FROM fleets WHERE id = $1 AND NOT completed AND NOT disabled) \
            AND NOT EXISTS (SELECT 1 FROM legacy_claims WHERE killmail_id = $5) \
          ON CONFLICT (killmail_id) DO NOTHING RETURNING id), \
          queued AS (INSERT INTO outbox (request_id, channel) \
@@ -1263,7 +1281,7 @@ fn fleet_page(
         .field("Status", f.status())
         .field("SRP Code", f.code.clone())
         .field("Added by", f.created_by.clone());
-    if !f.completed {
+    if f.closed().is_none() {
         // aa-srp's "Copy SRP link to clipboard": for fleet chat or Discord.
         about = about
             .field("Link to share", share(format!("request/{}", f.code)))
@@ -1390,22 +1408,36 @@ fn fleet_page(
 }
 
 /// A fleet's buttons for SRP managers: Mark Completed (or Incomplete),
-/// Mark Approved Paid and Remove Fleet. Each posts to `fleet_action`.
+/// Disable or Enable (AA core's; while not completed), Mark Approved Paid
+/// and Remove Fleet. Each posts to `fleet_action`.
 fn fleet_buttons(f: &Fleet) -> Vec<Action> {
-    vec![
-        if f.completed {
-            action("Mark Incomplete", "reopen").confirm("Pilots can request SRP again.")
+    let mut buttons = vec![if f.completed {
+        action("Mark Incomplete", "reopen").confirm(if f.disabled {
+            "It stays disabled: Enable it for requests."
         } else {
-            action("Mark Completed", "complete")
-                .confirm("No more requests: finish reviewing the ones in.")
-        },
+            "Pilots can request SRP again."
+        })
+    } else {
+        action("Mark Completed", "complete")
+            .confirm("No more requests: finish reviewing the ones in.")
+    }];
+    if !f.completed {
+        buttons.push(if f.disabled {
+            action("Enable", "enable").confirm("Pilots can request SRP with its code again.")
+        } else {
+            action("Disable", "disable")
+                .confirm("No requests for now, until it's enabled; the ones in stay.")
+        });
+    }
+    buttons.push(
         action("Mark Approved Paid", "pay_all")
             .confirm("Every approved request of this fleet is marked paid now."),
-        action("Remove Fleet", "remove").tone(Tone::Danger).confirm(
-            "The fleet, its requests and their comments are removed. Their losses can then be \
-             requested again, as in AA.",
-        ),
-    ]
+    );
+    buttons.push(action("Remove Fleet", "remove").tone(Tone::Danger).confirm(
+        "The fleet, its requests and their comments are removed. Their losses can then be \
+         requested again, as in AA.",
+    ));
+    buttons
 }
 
 /// A request's buttons in its fleet's table, for SRP managers: Approve,
@@ -1486,6 +1518,22 @@ fn fleet_action(
                 "SRP fleet {} marked {} by {who}",
                 f.id,
                 if completed { "completed" } else { "incomplete" }
+            ));
+            back()
+        }
+        // AA core's srp_fleet_disable and srp_fleet_enable (aa-srp's
+        // Closed and Active), set, not toggled. The code stays, as aa-srp's.
+        form @ ("disable" | "enable") => {
+            let disabled = form == "disable";
+            storage::execute(
+                "UPDATE fleets SET disabled = $2 WHERE id = $1",
+                &[f.id.into(), disabled.into()],
+            )
+            .map_err(|e| failed("changing the fleet", e))?;
+            log::info(format!(
+                "SRP fleet {} {} by {who}",
+                f.id,
+                if disabled { "disabled" } else { "enabled" }
             ));
             back()
         }

@@ -1075,6 +1075,78 @@ async fn a_fleets_aar_is_edited(db: PgPool) {
     assert!(page.body.contains("Add AAR"), "{}", page.body);
 }
 
+/// AA core's srp_fleet_disable and srp_fleet_enable (aa-srp's Closed and
+/// Active): a disabled fleet takes no requests until enabled, without
+/// being completed; its requests stay and are still decided.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_fleet_is_disabled_and_enabled(db: PgPool) {
+    let OpRock {
+        h,
+        _zkill,
+        owner: _,
+        pilot,
+        manager,
+        fleet,
+        r1,
+        r4: _,
+    } = op_rock(db).await;
+    let fleet_url = format!("fleet/{fleet}");
+    let (_, code) = newest_fleet(&h).await;
+    let res = post(&h, &pilot, &fleet_url, "_form=disable").await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+
+    let res = post(&h, &manager, &fleet_url, "_form=disable").await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let page = open(&h, &manager, &fleet_url).await;
+    assert!(page.body.contains("Disabled"), "{}", page.body);
+    assert!(page.body.contains(">Enable<"), "{}", page.body);
+    // Not taking requests: the form says why, and a post is refused.
+    let form = open(&h, &pilot, &format!("request/{code}")).await;
+    assert!(
+        form.body
+            .contains("it takes no requests until SRP staff enable it"),
+        "{}",
+        form.body
+    );
+    let res = post(
+        &h,
+        &pilot,
+        &format!("request/{code}"),
+        &request("https://zkillboard.com/kill/1003/"),
+    )
+    .await;
+    assert_ne!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    // Still on the open list (it isn't completed), closed to requests.
+    let home = open(&h, &pilot, "").await;
+    assert!(home.body.contains("Op Rock"), "{}", home.body);
+    assert!(
+        !home.body.contains(&format!("request/{code}")),
+        "{}",
+        home.body
+    );
+    // Its requests are still decided.
+    let res = post(
+        &h,
+        &manager,
+        &format!("review/{r1}"),
+        "_form=decide&decision=approve&comment=",
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+
+    // Enabled, with the same code: requests again.
+    let res = post(&h, &manager, &fleet_url, "_form=enable").await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let form = open(&h, &pilot, &format!("request/{code}")).await;
+    assert!(form.body.contains("Killboard Link"), "{}", form.body);
+    // Completed, it offers neither.
+    let res = post(&h, &manager, &fleet_url, "_form=complete").await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let page = open(&h, &manager, &fleet_url).await;
+    assert!(!page.body.contains(">Disable<"), "{}", page.body);
+    assert!(!page.body.contains(">Enable<"), "{}", page.body);
+}
+
 /// Runs the app's queued jobs that are due (the relay).
 async fn work(h: &Harness) {
     let mut registry = Registry::new();
