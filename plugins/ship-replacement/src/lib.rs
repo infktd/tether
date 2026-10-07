@@ -19,10 +19,11 @@
 //!   characters; each loss is requested once while its request exists.
 //! - **Managing** (`srp_management`, AA's `auth.srp_management`): approve
 //!   (the payout defaults to zKillboard's value) or reject with a comment,
-//!   update the payout at any time, mark approved ones paid (aa-srp's),
-//!   remove a request (its loss can then be requested again), edit a
-//!   fleet's AAR, complete and remove fleets. As AA, nothing stops a manager deciding
-//!   their own request. The pilot hears of each approval and rejection in
+//!   update the payout at any time, mark approved ones paid (Tether's own:
+//!   aa-srp has no paid status), remove a request (its loss can then be
+//!   requested again), edit a fleet's AAR, disable and enable, complete
+//!   and remove fleets. As AA, nothing stops a manager deciding their own
+//!   request. The pilot hears of each approval and rejection in
 //!   Tether's notifications, as AA's notify tells them.
 //! - **SRP team channel** (aa-srp's `srp_team_discord_channel_id`, none by
 //!   default): Settings, for `manage` (aa-srp's setting is changed in
@@ -1320,7 +1321,8 @@ fn fleet_page(
         Column::numeric("Payout"),
         Column::text("Status"),
     ];
-    // aa-srp's Approve and Reject (and Mark Paid) in the request's row.
+    // aa-srp's Approve and Reject (and Tether's Mark Paid, and Remove) in
+    // the request's row.
     if manage {
         columns.push(Column::text(""));
     }
