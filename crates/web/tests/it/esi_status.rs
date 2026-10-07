@@ -171,11 +171,19 @@ async fn esi_status_end_to_end(db: PgPool) {
     assert_eq!(queued_next(&h).await, 1);
     let res = page(&h, &at, &pilot).await;
     assert!(res.body.contains("compatibility date 20"), "{}", res.body);
-    // The verdict, in words, and what it means.
+    // The verdict, in words; aa-esi-status' count and share per status,
+    // with what each means.
     assert!(res.body.contains("1 of 3 routes not OK"), "{}", res.body);
+    let counts = res.body.find("By status").unwrap();
+    let degraded = res.body[counts..].find(">Degraded<").unwrap();
+    let ok = res.body[counts..].find(">OK<").unwrap();
+    assert!(degraded < ok, "{}", res.body);
+    assert!(res.body[counts..].contains("33.33%"), "{}", res.body);
+    assert!(res.body[counts..].contains("66.67%"), "{}", res.body);
+    assert!(res.body[counts..].contains("0.00%"), "{}", res.body);
     assert!(
         res.body
-            .contains("Degraded: these routes have a good chance of being slow"),
+            .contains("These routes have a good chance of being slow"),
         "{}",
         res.body
     );
@@ -199,11 +207,7 @@ async fn esi_status_end_to_end(db: PgPool) {
     }
     check(&h).await;
     let res = page(&h, &at, &pilot).await;
-    assert!(
-        !res.body.contains("good chance of being slow"),
-        "{}",
-        res.body
-    );
+    assert!(res.body.contains("100.00%"), "{}", res.body);
     assert!(res.body.contains("All 3 routes OK"), "{}", res.body);
     assert!(!res.body.contains("Needs attention"), "{}", res.body);
     // The change, newest first, and the incident: the stretch it was

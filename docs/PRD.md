@@ -355,7 +355,7 @@ Phase 5, release 1.0:
 - [ ] Contacts: edit a server link, and AA's eight colours (aa-contacts `aa_contacts/api/common.py:166-184`, `aa_contacts/models.py:166-174`)
 - [ ] Contacts: every contact listed, not the first 500 (aa-contacts `aa_contacts/api/common.py:81-85`)
 - [x] Sovereignty Timer: the previous score kept until the score changes, and shown (aa-sov-timer `sovtimer/tasks.py:124-134`, `sovtimer/views.py:173-178`). Built: a sync with an unchanged score keeps the previous one, and Progress reads "60% → 55% · attackers gaining"
-- [ ] ESI Status: the count and share of routes per status (aa-esi-status `esistatus/tasks.py:356-396`)
+- [x] ESI Status: the count and share of routes per status (aa-esi-status `esistatus/tasks.py:356-396`). Built: a By status table, worst first, with each status' routes, share (two places, as aa-esi-status) and meaning; the meanings text above Needs attention went with it
 - [ ] Time Zones: the adjusted time's countdown and "Already over" (aa-timezones `templates/timezones/partials/timezones/time-until.html:4-7`)
 - [ ] Bulletin Board: groups picked when a bulletin is made (aa-bulletin-board `aa_bulletin_board/forms.py:61-69`, `views.py:92-94`)
 - [ ] Contracts: Discord cards linking to the app's page, as aa-freight's (`freight/models/contracts.py:337-347`); and before Buyback, decide how the two apps share buyback contracts (AA_PARITY.md, Contracts)
