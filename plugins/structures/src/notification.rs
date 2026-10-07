@@ -2111,4 +2111,28 @@ mod tests {
             );
         }
     }
+
+    /// The fresh-install types are aa-structures' 22 webhook_defaults(),
+    /// each a type Structures relays from ESI.
+    #[test]
+    fn aa_webhook_defaults_are_known_types() {
+        let sql = include_str!("../migrations/0007_aa_defaults.sql");
+        let list = sql
+            .split_once("notification_types = ARRAY[")
+            .and_then(|(_, rest)| rest.split_once(']'))
+            .map(|(list, _)| list)
+            .expect("the defaults' list");
+        let mut defaults: Vec<&str> = list
+            .split(',')
+            .map(|k| k.trim().trim_matches('\''))
+            .collect();
+        assert_eq!(defaults.len(), 22, "{defaults:?}");
+        for kind in &defaults {
+            assert!(TYPES.iter().any(|(k, _, _, _)| k == kind), "{kind}");
+            assert!(!GENERATED.contains(kind), "{kind}");
+        }
+        defaults.sort_unstable();
+        defaults.dedup();
+        assert_eq!(defaults.len(), 22);
+    }
 }

@@ -2699,6 +2699,29 @@ fn channel_field(name: &str, label: &str, help: &str, value: Option<&str>) -> Fi
     Field::select(name, label, options).value(value).help(help)
 }
 
+/// Whether the default types (none: every type) tick `kind`.
+fn ticked(types: Option<&Vec<String>>, kind: &str) -> bool {
+    types.is_none_or(|t| t.iter().any(|k| k == kind))
+}
+
+/// A kind's channel help, saying so when the default types tick none of
+/// its types (as aa-structures' defaults leave moons, wars and members):
+/// owners on the defaults send nothing there until one is ticked.
+fn channel_help(category: Category, help: &str, types: Option<&Vec<String>>) -> String {
+    let any = notification::TYPES
+        .iter()
+        .any(|(kind, _, _, c)| *c == category && ticked(types, kind));
+    if any {
+        help.to_owned()
+    } else {
+        format!(
+            "{help} None of these types is ticked under Types: {} below, so owners on the \
+             default types send nothing here until one is.",
+            category.label()
+        )
+    }
+}
+
 fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
     let settings = settings().map_err(|e| failed("reading settings", e))?;
     let owners = storage::query(
@@ -2721,70 +2744,66 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
     if let Some(problem) = problem {
         page = page.text(problem);
     }
-    let discord = SettingsGroup::new("Discord")
-        .description(
-            "Each kind of notification goes to one of the channels an admin assigned Structures \
-             (Admin → Apps), within a day of it happening, once. These are the defaults: an owner \
-             can have its own (Owners' Discord routing below), as aa-structures' webhooks per \
-             owner. Notifications and alerts go to these channels whatever the view permissions: \
-             anyone who can read a channel sees the structures named in it.",
-        )
-        .field(channel_field(
-            "attack_channel",
-            "Attacks",
+    let mut discord = SettingsGroup::new("Discord").description(
+        "Each kind of notification goes to one of the channels an admin assigned Structures \
+         (Admin → Apps), within a day of it happening, once. These are the defaults: an owner \
+         can have its own (Owners' Discord routing below), as aa-structures' webhooks per \
+         owner. Notifications and alerts go to these channels whatever the view permissions: \
+         anyone who can read a channel sees the structures named in it.",
+    );
+    for (category, help) in [
+        (
+            Category::Attack,
             "Under attack, lost shields or armor (with the timer), destroyed.",
-            settings.attack.as_deref(),
-        ))
-        .field(channel_field(
-            "fuel_channel",
-            "Fuel and services",
+        ),
+        (
+            Category::Fuel,
             "EVE's fuel alerts, services offline, low power, refuelled structures, and the fuel \
              and jump fuel alerts below.",
-            settings.fuel.as_deref(),
-        ))
-        .field(channel_field(
-            "state_channel",
-            "State changes",
+        ),
+        (
+            Category::State,
             "Online, high power, anchoring and unanchoring, ownership transferred, reinforcement \
              hour changed.",
-            settings.state.as_deref(),
-        ))
-        .field(channel_field(
-            "moon_channel",
-            "Moon extractions",
+        ),
+        (
+            Category::Moon,
             "Extractions started, chunks arrived, fractures and cancellations.",
-            settings.moon.as_deref(),
-        ))
-        .field(channel_field(
-            "sov_channel",
-            "Sovereignty and bills",
+        ),
+        (
+            Category::Sov,
             "Sovereignty structures reinforced, destroyed or captured, claims, anchoring in \
              alliance space, and bills. Alliance-wide ones go only through the alliance main owner.",
-            settings.sov.as_deref(),
-        ))
-        .field(channel_field(
-            "war_channel",
-            "Wars",
+        ),
+        (
+            Category::War,
             "Wars declared, allies, surrenders, CONCORD retracting them, war eligibility.",
-            settings.war.as_deref(),
-        ))
-        .field(channel_field(
-            "corp_channel",
-            "Members and projects",
+        ),
+        (
+            Category::Corp,
             "Applications, members joining and leaving, corporation projects.",
-            settings.corp.as_deref(),
+        ),
+    ] {
+        discord = discord.field(channel_field(
+            &format!("{}_channel", category.name()),
+            category.label(),
+            &channel_help(category, help, settings.notification_types.as_ref()),
+            settings.channel(category),
         ));
+    }
     let pings = SettingsGroup::new("Pings")
         .field(
             Field::checkbox("default_pings", "Default pings", settings.default_pings).help(
-                "aa-structures' default pings: danger notifications ping @everyone and warnings \
-                 @here. Tether's bot mentions the Discord roles of these states instead.",
+                "aa-structures' default pings (on in a fresh install): danger notifications ping \
+                 @everyone and warnings @here. Tether's bot mentions the Discord roles of these \
+                 states instead, once a role is mapped to them on Administration's Discord page. \
+                 Until then messages go without a mention.",
             ),
         )
         .field(
             Field::text("danger_ping", "Danger pings mention the role of state", 64)
                 .value(settings.danger_ping.clone().unwrap_or_default())
-                .help("aa-structures' @everyone, e.g. Member. Empty: no mention."),
+                .help("aa-structures' @everyone. Member by default. Empty: no mention."),
         )
         .field(
             Field::text(
@@ -2793,7 +2812,10 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
                 64,
             )
             .value(settings.warning_ping.clone().unwrap_or_default())
-            .help("aa-structures' @here. Empty: no mention."),
+            .help(
+                "aa-structures' @here. Member in a fresh install (a role mention reaches its \
+                 offline members too). Empty: no mention.",
+            ),
         );
     let shown = SettingsGroup::new("Timers and the list")
         .field(
@@ -2949,17 +2971,19 @@ fn settings_page(problem: Option<&str>) -> Result<Page, PageError> {
         if i == 0 {
             types = types.description(
                 "Which notification types are sent (aa-structures' webhook filters), with their \
-                 severity, by kind. These are the defaults; an owner can pick its own.",
+                 severity, by kind. These are the defaults; an owner can pick its own. A fresh \
+                 install ticks aa-structures' defaults for new webhooks.",
             );
         }
         form = form.group(types);
     }
     let page = page.settings(form);
+    let types = settings.notification_types.as_ref();
     Ok(page
         .table(fuel_alert_table()?)
-        .form(fuel_alert_form())
+        .form(fuel_alert_form(types))
         .table(jump_fuel_alert_table()?)
-        .form(jump_fuel_alert_form())
+        .form(jump_fuel_alert_form(types))
         .table(routing_table)
         .table(owner_table)
         .text(
@@ -3064,7 +3088,7 @@ fn type_group(category: Category, list: Option<&Vec<String>>) -> SettingsGroup {
         group = group.field(Field::checkbox(
             type_field(kind),
             format!("{label} ({})", severity_name(*severity)),
-            list.is_none_or(|t| t.iter().any(|k| k == kind)),
+            ticked(list, kind),
         ));
     }
     group
@@ -3101,7 +3125,10 @@ fn fuel_alert_table() -> Result<Table, PageError> {
             Column::text(""),
         ])
         .title("Fuel alerts")
-        .empty("No fuel alerts: add one below."),
+        .empty(
+            "No fuel alerts, as aa-structures starts. EVE's own fuel alerts are relayed while \
+             their types are ticked. Add one below for more.",
+        ),
         rows.rows.iter().map(|r| {
             let (start, end) = (int(r, 1), int(r, 2));
             vec![
@@ -3129,19 +3156,56 @@ fn fuel_alert_table() -> Result<Table, PageError> {
     ))
 }
 
-fn fuel_alert_form() -> Form {
+/// A fuel or jump fuel alert's ping: aa-structures' @here unless picked.
+fn alert_ping_field() -> Field {
+    Field::select(
+        "ping",
+        "Ping",
+        vec![
+            ("none".to_owned(), "None".to_owned()),
+            ("warning".to_owned(), "Warning role (@here)".to_owned()),
+            ("danger".to_owned(), "Danger role (@everyone)".to_owned()),
+        ],
+    )
+    .value("warning")
+    .help(
+        "The role of the state named under Pings above, mentioned only while default pings (or \
+         the owner's own) are on, as aa-structures' webhook and owner pings override an alert's.",
+    )
+    .required()
+}
+
+fn fuel_alert_form(types: Option<&Vec<String>>) -> Form {
     let hours = |name: &str, label: &str, min: f64, help: &str| {
         Field::number(name, label)
             .range(Some(min), Some(MAX_ALERT_HOURS as f64), true)
             .help(help)
             .required()
     };
+    let mut description = "aa-structures' fuel alert configs, any number: an alert on the owner's \
+        fuel channel when a structure (Upwell or starbase) has at most Start and more than End \
+        hours of fuel left, again every Repeat hours while it stays there. EVE's own fuel alerts \
+        are relayed as well, as in aa-structures, so a structure in an alert's range is reported \
+        by both."
+        .to_owned();
+    // Sent under EVE's types: one unticked sends none of its kind.
+    for (kind, label, of) in [
+        (
+            "StructureFuelAlert",
+            "Upwell structure fuel alert",
+            "Upwell structures",
+        ),
+        ("TowerResourceAlertMsg", "Starbase fuel alert", "starbases"),
+    ] {
+        if !ticked(types, kind) {
+            description.push_str(&format!(
+                " Owners on the default types send none for {of} while '{label}' is unticked \
+                 under Types: Fuel and services: tick it to send them."
+            ));
+        }
+    }
     Form::new("add_fuel_alert", "Add fuel alert")
-        .description(
-            "aa-structures' fuel alert configs, any number: an alert on the owner's fuel channel \
-             when a structure (Upwell or starbase) has at most Start and more than End hours of \
-             fuel left, again every Repeat hours while it stays there.",
-        )
+        .description(description)
         .field(hours("start_hours", "Start (hours left)", 1.0, "e.g. 48"))
         .field(hours(
             "end_hours",
@@ -3156,19 +3220,7 @@ fn fuel_alert_form() -> Form {
                 .help("0: once in the range.")
                 .required(),
         )
-        .field(
-            Field::select(
-                "ping",
-                "Ping",
-                vec![
-                    ("none".to_owned(), "None".to_owned()),
-                    ("warning".to_owned(), "Warning role (@here)".to_owned()),
-                    ("danger".to_owned(), "Danger role (@everyone)".to_owned()),
-                ],
-            )
-            .value("none")
-            .required(),
-        )
+        .field(alert_ping_field())
 }
 
 fn add_fuel_alert(viewer: &Viewer, submission: &Submission) -> Result<SubmitResult, PageError> {
@@ -3279,32 +3331,27 @@ fn jump_fuel_alert_table() -> Result<Table, PageError> {
     ))
 }
 
-fn jump_fuel_alert_form() -> Form {
+fn jump_fuel_alert_form(types: Option<&Vec<String>>) -> Form {
+    let mut description = "aa-structures' jump fuel alert configs: an alert on the owner's fuel \
+        channel once a jump gate's fuel bay has less liquid ozone than this (as the corporation's \
+        assets last said), until it's topped up above it."
+        .to_owned();
+    if !ticked(types, "StructureJumpFuelAlert") {
+        description.push_str(
+            " Owners on the default types send none while 'Jump gate low on liquid ozone' is \
+             unticked under Types: Fuel and services (aa-structures' defaults leave it off): \
+             tick it to send them.",
+        );
+    }
     Form::new("add_jump_fuel_alert", "Add jump fuel alert")
-        .description(
-            "aa-structures' jump fuel alert configs: an alert on the owner's fuel channel once a \
-             jump gate's fuel bay has less liquid ozone than this (as the corporation's assets \
-             last said), until it's topped up above it.",
-        )
+        .description(description)
         .field(
             Field::number("threshold", "Below (units of liquid ozone)")
                 .range(Some(1.0), Some(MAX_OZONE as f64), true)
                 .help("e.g. 100000")
                 .required(),
         )
-        .field(
-            Field::select(
-                "ping",
-                "Ping",
-                vec![
-                    ("none".to_owned(), "None".to_owned()),
-                    ("warning".to_owned(), "Warning role (@here)".to_owned()),
-                    ("danger".to_owned(), "Danger role (@everyone)".to_owned()),
-                ],
-            )
-            .value("none")
-            .required(),
-        )
+        .field(alert_ping_field())
 }
 
 fn add_jump_fuel_alert(

@@ -49,39 +49,32 @@ fn plugin_file(name: &str) -> String {
     .unwrap()
 }
 
+/// The plugin's migrations, in order.
+const MIGRATIONS: [&str; 7] = [
+    "migrations/0001_structures.sql",
+    "migrations/0002_timers_corporation_only.sql",
+    "migrations/0003_starbases_orbitals_tags.sql",
+    "migrations/0004_aa_routing_fuel_alerts_sync.sql",
+    "migrations/0005_all_notification_types.sql",
+    "migrations/0006_outbox_cards.sql",
+    "migrations/0007_aa_defaults.sql",
+];
+
 /// The real package, signed with a test key.
 async fn install(h: &Harness, owner: &str) {
     let key = Key::new(9);
     let manifest = plugin_file("plugin.toml").replace("PUBLISHER_KEY", &key.public());
-    let first = plugin_file("migrations/0001_structures.sql");
-    let second = plugin_file("migrations/0002_timers_corporation_only.sql");
-    let third = plugin_file("migrations/0003_starbases_orbitals_tags.sql");
-    let fourth = plugin_file("migrations/0004_aa_routing_fuel_alerts_sync.sql");
-    let fifth = plugin_file("migrations/0005_all_notification_types.sql");
-    let sixth = plugin_file("migrations/0006_outbox_cards.sql");
+    let migrations: Vec<(&str, String)> = MIGRATIONS
+        .iter()
+        .map(|name| (*name, plugin_file(name)))
+        .collect();
     let component = component();
-    let bytes = testing::zip(&[
+    let mut files: Vec<(&str, &[u8])> = vec![
         ("plugin.toml", manifest.as_bytes()),
-        ("plugin.wasm", &component),
-        ("migrations/0001_structures.sql", first.as_bytes()),
-        (
-            "migrations/0002_timers_corporation_only.sql",
-            second.as_bytes(),
-        ),
-        (
-            "migrations/0003_starbases_orbitals_tags.sql",
-            third.as_bytes(),
-        ),
-        (
-            "migrations/0004_aa_routing_fuel_alerts_sync.sql",
-            fourth.as_bytes(),
-        ),
-        (
-            "migrations/0005_all_notification_types.sql",
-            fifth.as_bytes(),
-        ),
-        ("migrations/0006_outbox_cards.sql", sixth.as_bytes()),
-    ]);
+        ("plugin.wasm", component.as_slice()),
+    ];
+    files.extend(migrations.iter().map(|(name, sql)| (*name, sql.as_bytes())));
+    let bytes = testing::zip(&files);
     let at = install_package(h, owner, &bytes, &key.sign(&bytes)).await;
     assert_eq!(at, format!("/admin/plugins/{ID}"));
 }
@@ -402,6 +395,48 @@ async fn fuel_configs(h: &Harness) -> Vec<(i32, i32)> {
     .unwrap()
 }
 
+/// Adds a fuel alert (aa-structures' fuel alert config) from the settings
+/// page's form: once, pinging nobody.
+async fn add_fuel_alert(h: &Harness, token: &str, start: i32, end: i32) {
+    let res = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/settings"),
+            &format!(
+                "_form=add_fuel_alert&start_hours={start}&end_hours={end}&repeat_hours=0&ping=none"
+            ),
+            token,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+}
+
+/// The default notification types, sorted (none: every type).
+async fn default_types(h: &Harness) -> Option<Vec<String>> {
+    sqlx::query_scalar(
+        r#"SELECT (SELECT array_agg(t ORDER BY t) FROM unnest(notification_types) t)
+           FROM "plugin_tether.structures".settings"#,
+    )
+    .fetch_one(&h.db)
+    .await
+    .unwrap()
+}
+
+/// EVE's own fuel alert for the Keep.
+fn fuel_text() -> String {
+    format!(
+        "listOfTypesAndQty:\n- - 307\n  - 4246\nsolarsystemID: {SYSTEM}\n\
+         structureID: &id001 {KEEP}\nstructureShowInfoData:\n- showinfo\n- 35832\n- *id001\n\
+         structureTypeID: 35832\n"
+    )
+}
+
+/// The role mention a pinged message starts with.
+fn member_ping() -> String {
+    format!("<@&{DISCORD_MEMBER_ROLE}>")
+}
+
 async fn grant(h: &Harness, owner: &str, permission: &str) {
     let res = send(
         &h.app,
@@ -469,6 +504,13 @@ async fn structures_end_to_end(db: PgPool) {
                 now - Duration::minutes(3),
                 &attack_text().replace(&KEEP.to_string(), "1035466619999")
             ),
+            // EVE's own fuel alert, last.
+            notification(
+                1005,
+                "StructureFuelAlert",
+                now - Duration::seconds(30),
+                &fuel_text()
+            ),
         ])))
         .up_to_n_times(1)
         .mount(&h.esi_server)
@@ -486,10 +528,10 @@ async fn structures_end_to_end(db: PgPool) {
         .await;
     let owner = approve_owner(&h, &owner).await;
 
-    // Discord: the plugin gets the ping channel; everything goes there,
-    // with the fuel alerts at 72, 24 and 6 hours (0.3's thresholds, as
-    // aa-structures' configs) and default pings: danger and warning
-    // notifications mention Member's role.
+    // Discord: the plugin gets the ping channel; everything goes there.
+    // A fresh install starts as aa-structures: default pings on (danger and
+    // warning notifications mention Member's role), its default types, no
+    // fuel alert configs.
     discord_ready(&h, &owner).await;
     let res = send(
         &h.app,
@@ -520,9 +562,60 @@ async fn structures_end_to_end(db: PgPool) {
         "{}",
         bad.body
     );
-    // 0.3's thresholds became aa-structures' fuel alert configs.
     assert!(settings.body.contains("Fuel alerts"), "{}", settings.body);
-    assert_eq!(fuel_configs(&h).await, vec![(72, 24), (24, 6), (6, 0)]);
+    assert!(fuel_configs(&h).await.is_empty());
+    let fresh = form_body(&settings.body, "settings", &[]);
+    for on in [
+        "default_pings=on",
+        "danger_ping=Member",
+        "warning_ping=Member",
+        "t_structurefuelalert=on",
+        "t_structureunderattack=on",
+    ] {
+        assert!(fresh.split('&').any(|p| p == on), "{on}: {fresh}");
+    }
+    for off in [
+        "t_structureunanchoring=",
+        "t_moonminingextractionstarted=",
+        "timers_corporation_only=",
+    ] {
+        assert!(!fresh.contains(off), "{off}: {fresh}");
+    }
+    let mut defaults: Vec<String> = [
+        "OrbitalAttacked",
+        "OrbitalReinforced",
+        "SkyhookDestroyed",
+        "SkyhookLostShields",
+        "SkyhookOnline",
+        "SkyhookUnderAttack",
+        "SovStructureDestroyed",
+        "SovStructureReinforced",
+        "StructureAnchoring",
+        "StructureDestroyed",
+        "StructureFuelAlert",
+        "StructureLostArmor",
+        "StructureLostShields",
+        "StructureLowReagentsAlert",
+        "StructureNoReagentsAlert",
+        "StructureOnline",
+        "StructureServicesOffline",
+        "StructureUnderAttack",
+        "StructureWentHighPower",
+        "StructureWentLowPower",
+        "TowerAlertMsg",
+        "TowerResourceAlertMsg",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    defaults.sort();
+    assert_eq!(default_types(&h).await, Some(defaults));
+    // A new fuel alert pings the warning role, aa-structures' @here.
+    assert!(
+        form_body(&settings.body, "add_fuel_alert", &[]).contains("ping=warning"),
+        "{}",
+        settings.body
+    );
+    // The moon drills are ticked here, beside the defaults.
     let res = save_settings(
         &h,
         &owner,
@@ -531,9 +624,7 @@ async fn structures_end_to_end(db: PgPool) {
             ("fuel_channel", c),
             ("state_channel", c),
             ("moon_channel", c),
-            ("default_pings", "on"),
-            ("danger_ping", "Member"),
-            ("warning_ping", "Member"),
+            ("t_moonminingextractionstarted", "on"),
         ],
     )
     .await;
@@ -624,7 +715,7 @@ async fn structures_end_to_end(db: PgPool) {
     // The host passed on the types Structures relays only: not a type
     // newer than its ESI client, nor an application to a corporation
     // other than the owner's.
-    assert_eq!(count(&h, "notifications").await, 5);
+    assert_eq!(count(&h, "notifications").await, 6);
     let by_owner = page(&h, &format!("/plugins/{ID}/owner/{CHRIBBA_CORP}"), &owner).await;
     assert_eq!(by_owner.status, StatusCode::OK, "{}", by_owner.body);
     assert!(by_owner.body.contains("Structures: Otherworld Enterprises"));
@@ -636,14 +727,11 @@ async fn structures_end_to_end(db: PgPool) {
     );
 
     // Discord: the attack (danger) and the shields with the timer
-    // (warning), both mentioning Member's role, the moon drill (info, no
-    // ping) and the 6-hour fuel alert; not the old one.
+    // (warning), both mentioning Member's role by default, the moon drill
+    // (info, no ping) and EVE's fuel alert (warning); not the old attack.
     let sent = discord_messages(&h).await;
     assert_eq!(sent.len(), 4, "{sent:?}");
-    assert!(
-        sent[0].starts_with(&format!("<@&{DISCORD_MEMBER_ROLE}>")),
-        "{sent:?}"
-    );
+    assert!(sent[0].starts_with(&member_ping()), "{sent:?}");
     assert!(
         sent[0].contains(
             "Under attack: Jita - Keep (Astrahus) in Jita by Some Pilot, Horde Vanguard., \
@@ -698,11 +786,22 @@ async fn structures_end_to_end(db: PgPool) {
         drill["footer"]["text"],
         "Structures · Moon extraction started"
     );
+    // Low fuel once, by EVE's alert: no fuel alert config of Tether's
+    // reports it again (aa-structures starts with none).
+    assert!(sent[3].starts_with(&member_ping()), "{sent:?}");
     assert!(
-        sent[3].starts_with("Low fuel: Jita - Keep (Astrahus) in Jita"),
+        sent[3].contains("Fuel alert: Jita - Keep (Astrahus) in Jita is running low on fuel."),
         "{sent:?}"
     );
-    assert!(sent[3].contains("under the 6-hour alert"), "{sent:?}");
+    assert!(sent.iter().all(|m| !m.contains("Low fuel")), "{sent:?}");
+    // The owner's pings follow the default, on.
+    let routing = page(
+        &h,
+        &format!("/plugins/{ID}/settings/owner/{CHRIBBA_CORP}"),
+        &owner,
+    )
+    .await;
+    assert!(routing.body.contains("Default (on)"), "{}", routing.body);
 
     // Read again: the same notifications, and the attack under another
     // id, send nothing more; nor does the fuel, still low.
@@ -716,13 +815,25 @@ async fn structures_end_to_end(db: PgPool) {
         reads(&h, &format!("/characters/{CHRIBBA}/notifications")).await,
         2
     );
-    assert_eq!(count(&h, "notifications").await, 5);
+    assert_eq!(count(&h, "notifications").await, 6);
     assert_eq!(discord_messages(&h).await.len(), 4);
     // Structures were read under an hour ago: not again.
     assert_eq!(
         reads(&h, &format!("/corporations/{CHRIBBA_CORP}/structures")).await,
         1
     );
+    // A fuel alert config of Tether's: the Keep is reported by it too, as
+    // aa-structures does once one is set up.
+    add_fuel_alert(&h, &owner, 6, 0).await;
+    let problems = sync(&h).await;
+    assert!(problems.is_empty(), "{problems:?}");
+    let sent = discord_messages(&h).await;
+    assert_eq!(sent.len(), 5, "{sent:?}");
+    assert!(
+        sent[4].starts_with("Low fuel: Jita - Keep (Astrahus) in Jita"),
+        "{sent:?}"
+    );
+    assert!(sent[4].contains("under the 6-hour alert"), "{sent:?}");
     let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
     assert!(settings.body.contains("Sent"), "{}", settings.body);
     assert!(settings.body.contains("Chribba"), "{}", settings.body);
@@ -1427,6 +1538,9 @@ async fn starbases_orbitals_fittings_tags_and_owner_routing(db: PgPool) {
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
     let c = DISCORD_PING_CHANNEL;
+    // This test reads the messages' text: pings off. Starbases reinforced
+    // ticked (not among aa-structures' default types), and a fuel alert
+    // under 72 hours.
     let res = save_settings(
         &h,
         &owner,
@@ -1435,10 +1549,13 @@ async fn starbases_orbitals_fittings_tags_and_owner_routing(db: PgPool) {
             ("fuel_channel", c),
             ("state_channel", c),
             ("moon_channel", c),
+            ("default_pings", ""),
+            ("t_towerreinforcedextra", "on"),
         ],
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    add_fuel_alert(&h, &owner, 72, 0).await;
     Mock::given(method("POST"))
         .and(path_regex(r"^/api/v10/channels/\d+/messages$"))
         .respond_with(ResponseTemplate::new(200).set_body_json(
@@ -1920,7 +2037,9 @@ async fn aa_structures_rules(db: PgPool) {
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
-    // Another fuel alert: under 100 hours, every hour, pinging danger.
+    // Fuel alerts: under 6 hours, once, pinging nobody; and under 100
+    // hours, every hour, pinging danger.
+    add_fuel_alert(&h, &owner, 6, 0).await;
     let res = post(
         &h,
         &owner,
@@ -1938,7 +2057,9 @@ async fn aa_structures_rules(db: PgPool) {
         "{sent:?}"
     );
     assert!(!sent.iter().any(|m| m.contains("Under attack")), "{sent:?}");
-    // The Keep (5 hours left) is in both alerts' ranges; pings are off.
+    // The Keep (5 hours left) is in both alerts' ranges. Pings are on by
+    // default: the lost shields (danger) and the 100-hour alert (danger)
+    // mention Member's role, the 6-hour alert (no ping) nobody.
     for hours in [6, 100] {
         assert_eq!(
             sent.iter()
@@ -1948,7 +2069,15 @@ async fn aa_structures_rules(db: PgPool) {
             "{hours}: {sent:?}"
         );
     }
-    assert!(sent.iter().all(|m| !m.contains("<@&")), "{sent:?}");
+    for (what, pinged) in [
+        ("lost its shields", true),
+        ("under the 100-hour alert", true),
+        ("under the 6-hour alert", false),
+    ] {
+        let message = sent.iter().find(|m| m.contains(what)).unwrap();
+        assert_eq!(message.starts_with(&member_ping()), pinged, "{message}");
+        assert_eq!(message.contains("<@&"), pinged, "{message}");
+    }
     // An hour on, the repeating alert goes again; the other doesn't.
     sqlx::query(
         r#"UPDATE "plugin_tether.structures".fuel_alerts_sent SET sent_at = now() - interval '2 hours'"#,
@@ -2229,6 +2358,24 @@ async fn wars_sovereignty_members_refuels_and_jump_fuel(db: PgPool) {
         .mount(&h.discord_server)
         .await;
     let c = DISCORD_PING_CHANNEL;
+    // aa-structures' default types leave wars, members and jump fuel
+    // alerts off: the settings say so where they're set.
+    let settings_url = format!("/plugins/{ID}/settings");
+    let settings = page(&h, &settings_url, &owner).await;
+    for note in [
+        "None of these types is ticked under Types: Wars below",
+        "None of these types is ticked under Types: Members and projects below",
+        "Owners on the default types send none while",
+    ] {
+        assert!(settings.body.contains(note), "{note}: {}", settings.body);
+    }
+    assert!(
+        !settings
+            .body
+            .contains("None of these types is ticked under Types: Sovereignty and bills below"),
+        "{}",
+        settings.body
+    );
     let res = save_settings(
         &h,
         &owner,
@@ -2240,10 +2387,22 @@ async fn wars_sovereignty_members_refuels_and_jump_fuel(db: PgPool) {
             ("sov_channel", c),
             ("war_channel", c),
             ("corp_channel", c),
+            ("t_charappacceptmsg", "on"),
+            ("t_wardeclared", "on"),
+            ("t_structurejumpfuelalert", "on"),
+            ("t_structurerefueledextra", "on"),
         ],
     )
     .await;
     assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let settings = page(&h, &settings_url, &owner).await;
+    for note in [
+        "None of these types is ticked under Types: Wars below",
+        "None of these types is ticked under Types: Members and projects below",
+        "Owners on the default types send none while",
+    ] {
+        assert!(!settings.body.contains(note), "{note}: {}", settings.body);
+    }
     let res = post(
         &h,
         &owner,
@@ -2288,7 +2447,7 @@ async fn wars_sovereignty_members_refuels_and_jump_fuel(db: PgPool) {
     );
     // Alliance-wide: not until this owner is the alliance's main.
     assert!(
-        !messages.iter().any(|m| m.starts_with("War declared")),
+        !messages.iter().any(|m| m.contains("War declared")),
         "{messages:?}"
     );
     assert!(
@@ -2297,13 +2456,14 @@ async fn wars_sovereignty_members_refuels_and_jump_fuel(db: PgPool) {
             .iter()
             .all(|t| !t.key.starts_with("sov:"))
     );
-    // A jump gate below the alert: once, pinging the warning role's
-    // (pings are off by default, so no mention).
+    // A jump gate below the alert: once, pinging the warning role, Member's
+    // by default.
     let ozone: Vec<&String> = messages
         .iter()
-        .filter(|m| m.starts_with("Jump gate low on liquid ozone"))
+        .filter(|m| m.contains("Jump gate low on liquid ozone"))
         .collect();
     assert_eq!(ozone.len(), 1, "{messages:?}");
+    assert!(ozone[0].starts_with(&member_ping()), "{ozone:?}");
     assert!(
         ozone[0].contains("Jita » Perimeter") && ozone[0].contains("50000 units left"),
         "{ozone:?}"
@@ -2331,21 +2491,25 @@ async fn wars_sovereignty_members_refuels_and_jump_fuel(db: PgPool) {
     let problems = sync(&h).await;
     assert!(problems.is_empty(), "{problems:?}");
     let messages = discord_messages(&h).await;
-    assert!(
-        messages.iter().any(|m| m.starts_with(
-            "War declared: Otherworld Enterprises declared war on Otherworld Empire with \
-             Jita - Keep as war headquarters."
-        )),
-        "{messages:?}"
+    // Danger, so each mentions Member's role by default.
+    let war = format!(
+        "{} War declared: Otherworld Enterprises declared war on Otherworld Empire with \
+         Jita - Keep as war headquarters.",
+        member_ping()
     );
+    assert!(messages.iter().any(|m| m.starts_with(&war)), "{messages:?}");
+    let sov = |what: &str| {
+        format!(
+            "{} Sovereignty structure reinforced: The {what} in Jita belonging to Otherworld \
+             Empire",
+            member_ping()
+        )
+    };
     assert!(
-        messages.iter().any(|m| m.starts_with(
-            "Sovereignty structure reinforced: The Territorial Claim Unit in Jita belonging to \
-             Otherworld Empire"
-        ) || m.starts_with(
-            "Sovereignty structure reinforced: The sovereignty structure in Jita belonging to \
-             Otherworld Empire"
-        )),
+        messages
+            .iter()
+            .any(|m| m.starts_with(&sov("Territorial Claim Unit"))
+                || m.starts_with(&sov("sovereignty structure"))),
         "{messages:?}"
     );
     // Each once, though handled again.
@@ -2357,7 +2521,7 @@ async fn wars_sovereignty_members_refuels_and_jump_fuel(db: PgPool) {
     assert_eq!(
         messages
             .iter()
-            .filter(|m| m.starts_with("Jump gate low"))
+            .filter(|m| m.contains("Jump gate low"))
             .count(),
         1,
         "{messages:?}"
@@ -2375,6 +2539,107 @@ async fn wars_sovereignty_members_refuels_and_jump_fuel(db: PgPool) {
             .any(|t| t.key.starts_with("sov:") && t.title == "TCU in Jita: sov timer"),
         "{shared:?}"
     );
+}
+
+// ---- aa-structures' fresh-install defaults ------------------------------------
+
+/// What 0007 leaves in the settings: default pings, the warning ping, the
+/// default types and how many fuel alert configs.
+type Defaults = (bool, Option<String>, Option<Vec<String>>, i64);
+
+/// Runs 0001-0006 in a scratch schema, then `setup` (an install in some
+/// state), then 0007; what the settings then say.
+async fn migrated(conn: &mut sqlx::PgConnection, schema: &str, setup: &str) -> Defaults {
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+        "CREATE SCHEMA scratch_{schema}; SET search_path TO scratch_{schema}"
+    )))
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+    for name in &MIGRATIONS[..6] {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(plugin_file(name)))
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+    }
+    sqlx::raw_sql(sqlx::AssertSqlSafe(setup.to_owned()))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(plugin_file(MIGRATIONS[6])))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query_as(
+        "SELECT default_pings, warning_ping, notification_types, \
+             (SELECT count(*) FROM fuel_alert_configs) \
+         FROM settings",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .unwrap()
+}
+
+/// aa-structures' defaults reach a fresh install only: one already set up
+/// in any way keeps what it has.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn aa_defaults_only_for_a_fresh_install(db: PgPool) {
+    let mut conn = db.acquire().await.unwrap();
+    let (pings, warning, types, configs) = migrated(&mut conn, "fresh", "SELECT 1").await;
+    assert!(pings);
+    assert_eq!(warning.as_deref(), Some("Member"));
+    assert_eq!(types.map(|t| t.len()), Some(22));
+    assert_eq!(configs, 0);
+
+    let untouched = |pings: bool, types: Option<Vec<String>>, configs: i64| -> Defaults {
+        (pings, None, types, configs)
+    };
+    for (schema, setup, kept) in [
+        (
+            "owner",
+            "INSERT INTO owners (character_id, character_name, corporation_id) VALUES (1, 'A', 2)",
+            untouched(false, None, 3),
+        ),
+        (
+            "channel",
+            "UPDATE settings SET attack_channel = '600000000000000001'",
+            untouched(false, None, 3),
+        ),
+        (
+            "routing",
+            "INSERT INTO owner_channels (corporation_id, category, channel) VALUES (2, 'attack', NULL)",
+            untouched(false, None, 3),
+        ),
+        (
+            "owner_settings",
+            "INSERT INTO owner_settings (corporation_id, mention) VALUES (2, 'on')",
+            untouched(false, None, 3),
+        ),
+        // Saved with pings on, nothing else: the choice is kept.
+        (
+            "pings",
+            "UPDATE settings SET default_pings = true",
+            untouched(true, None, 3),
+        ),
+        // Saved with some types, no channel or owner yet.
+        (
+            "types",
+            "UPDATE settings SET notification_types = ARRAY['StructureUnderAttack']",
+            untouched(false, Some(vec!["StructureUnderAttack".to_owned()]), 3),
+        ),
+        (
+            "alerts",
+            "INSERT INTO fuel_alert_configs (start_hours, end_hours) VALUES (48, 0)",
+            untouched(false, None, 4),
+        ),
+        (
+            "queued",
+            "INSERT INTO outbox (key, channel, message) VALUES ('k', '1', 'm')",
+            untouched(false, None, 3),
+        ),
+    ] {
+        assert_eq!(migrated(&mut conn, schema, setup).await, kept, "{schema}");
+    }
 }
 
 // ---- the sync's ESI calls ----------------------------------------------------
@@ -2478,7 +2743,11 @@ async fn a_long_read_keeps_no_corporation_from_its_notifications(db: PgPool) {
         "{why:?}"
     );
     let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
-    assert!(settings.body.contains("60 pages at ESI"), "{}", settings.body);
+    assert!(
+        settings.body.contains("60 pages at ESI"),
+        "{}",
+        settings.body
+    );
 }
 
 // ---- the relay ------------------------------------------------------------------
