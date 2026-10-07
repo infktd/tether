@@ -28,6 +28,7 @@
 //!   the data sources are.
 
 mod extraction;
+mod labels;
 mod moons;
 mod planner;
 mod reports;
@@ -80,21 +81,40 @@ impl Plugin for MoonMining {
             ["reports"] => reports::page(&viewer),
             ["totals"] => totals_page(),
             ["planner"] => planner_page(&viewer),
-            ["settings"] => settings_page(),
+            ["settings"] => settings_page().map(with_chips),
+            ["settings", "labels"] => labels::settings_page(None).map(with_chips),
             _ => Err(PageError::NotFound),
         }
     }
 
     fn submit(submission: Submission) -> Result<SubmitResult, PageError> {
         let viewer = identity::viewer().ok_or(PageError::Forbidden)?;
-        match (submission.request.path.as_str(), submission.form.as_str()) {
+        let path = submission.request.path.as_str();
+        if let Some(moon) = path.strip_prefix("moon/") {
+            let moon = moon.parse().map_err(|_| PageError::NotFound)?;
+            return moons::save_label(&viewer, moon, &submission);
+        }
+        // The settings pages' forms are managers': checked here too, not
+        // only by the host's page rule.
+        if path.starts_with("settings") && !viewer.can("manage") {
+            return Err(PageError::Forbidden);
+        }
+        let result = match (path, submission.form.as_str()) {
             ("settings", "settings") => save_settings(&viewer, &submission),
+            ("settings/labels", "save_label") => labels::save_label(&viewer, &submission),
+            ("settings/labels", "delete_label") => labels::delete_label(&viewer, &submission),
             ("planner", form) if form.starts_with("cadence_") => {
                 save_cadence(&viewer, form, &submission)
             }
             ("upload", "survey") => moons::upload(&viewer, &submission),
             _ => Err(PageError::NotFound),
-        }
+        };
+        Ok(match result? {
+            SubmitResult::Page(page) if path.starts_with("settings") => {
+                SubmitResult::Page(with_chips(page))
+            }
+            other => other,
+        })
     }
 
     fn run_job(job: Job) -> Result<(), JobError> {
@@ -288,6 +308,13 @@ impl Settings {
             "CCP's average price of each ore".to_owned()
         }
     }
+}
+
+/// The settings pages (Settings and aa-moonmining's labels), as chips
+/// under the Manage bar Tether draws.
+fn with_chips(page: Page) -> Page {
+    page.link("General", "settings")
+        .link("Labels", "settings/labels")
 }
 
 /// The settings values are worked out with, for pages.
@@ -1079,8 +1106,7 @@ fn prices() -> Result<(), JobError> {
     // What they refine into (aa-moonmining reads every ore's materials),
     // priced too, for reprocess pricing.
     let materials = store_materials(&ores)?;
-    let wanted: std::collections::BTreeSet<i64> =
-        ores.iter().copied().chain(materials).collect();
+    let wanted: std::collections::BTreeSet<i64> = ores.iter().copied().chain(materials).collect();
     let rows: Vec<serde_json::Value> = all
         .into_iter()
         .filter(|p| wanted.contains(&p.type_id))
@@ -1103,7 +1129,9 @@ fn prices() -> Result<(), JobError> {
     )
     .map_err(|e| retry("storing prices", e))?;
     storage::execute(REPRICE, &[]).map_err(|e| retry("working out unit prices", e))?;
-    log::info(format!("prices of {stored} ore types and materials updated"));
+    log::info(format!(
+        "prices of {stored} ore types and materials updated"
+    ));
     let types: Vec<i64> = wanted.into_iter().collect();
     learn_names(&mut budget, &types)
 }

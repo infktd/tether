@@ -2205,10 +2205,22 @@ async fn refineries_gone_own_no_moons(db: PgPool) {
     assert!(!moons.body.contains("Jita IV - Moon 4"), "{}", moons.body);
     assert!(moons.body.contains("Jita IV - Moon 5"), "{}", moons.body);
     let reports = page(&h, &format!("/plugins/{ID}/reports"), &owner).await;
-    assert!(!reports.body.contains("Jita IV - Moon 4"), "{}", reports.body);
+    assert!(
+        !reports.body.contains("Jita IV - Moon 4"),
+        "{}",
+        reports.body
+    );
     let planner = page(&h, &format!("/plugins/{ID}/planner"), &owner).await;
-    assert!(!planner.body.contains("Jita - Drill One"), "{}", planner.body);
-    assert!(planner.body.contains("Jita - Drill Two"), "{}", planner.body);
+    assert!(
+        !planner.body.contains("Jita - Drill One"),
+        "{}",
+        planner.body
+    );
+    assert!(
+        planner.body.contains("Jita - Drill Two"),
+        "{}",
+        planner.body
+    );
     let past = page(&h, &format!("/plugins/{ID}?_tab=1"), &owner).await;
     assert!(past.body.contains("Jita - Drill One"), "{}", past.body);
     // Listed again (a refinery handed back): it owns its moon again.
@@ -2273,7 +2285,10 @@ async fn reprocess_pricing_values_ores_by_their_materials(db: PgPool) {
         off.body
     );
     let settings = page(&h, &format!("/plugins/{ID}/settings"), &owner).await;
-    for part in ["Price ores by what they refine into", "Reprocessing yield (%)"] {
+    for part in [
+        "Price ores by what they refine into",
+        "Reprocessing yield (%)",
+    ] {
         assert!(settings.body.contains(part), "{part}: {}", settings.body);
     }
     // On at 85%: (8,000 × 10 + 400 × 100 + 65 × 2,000) × 0.85 ÷ 100 =
@@ -2302,4 +2317,163 @@ async fn reprocess_pricing_values_ores_by_their_materials(db: PgPool) {
     .await
     .unwrap();
     assert_eq!(used, 10000.0);
+}
+
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn moon_labels_and_the_moons_filters(db: PgPool) {
+    cover(&db, Builtin::Blue, EntityKind::Corporation, 98133756).await;
+    let h = harness(db, true).await;
+    let owner = log_in_owner(&h, "196379789:Chribba").await;
+    install(&h, &owner).await;
+    mount_esi(&h).await;
+    mount_prices(&h).await;
+    let owner = approve_source(&h, &owner).await;
+    run_schedule(&h, "sync").await;
+    run_schedule(&h, "prices").await;
+    let res = upload_surveys(
+        &h,
+        &owner,
+        &format!(
+            "Jita IV - Moon 4\n\
+             \tZeolites\t0.3\t{ZEOLITES}\t{SYSTEM}\t40009077\t40009081\n\
+             \tXenotime\t0.1\t{XENOTIME}\t{SYSTEM}\t40009077\t40009081\n\
+             Jita IV - Moon 6\n\
+             \tSylvite\t0.5\t{SYLVITE}\t{SYSTEM}\t40009077\t40009083\n"
+        ),
+    )
+    .await;
+    assert!(res.body.contains("2 of 2 moons stored"), "{}", res.body);
+    work(&h).await;
+
+    // aa-moonmining's filters beyond rarity: owner, region and ore type,
+    // offered from the moons the viewer may see.
+    let all = format!("/plugins/{ID}/moons?_tab=1");
+    let moons = page(&h, &all, &owner).await;
+    for part in [
+        r#"<section aria-label="Owner">"#,
+        r#"<section aria-label="Region">"#,
+        r#"<section aria-label="Ore type">"#,
+        "Chribba Corp",
+        "The Forge",
+        "Xenotime",
+    ] {
+        assert!(moons.body.contains(part), "{part}: {}", moons.body);
+    }
+    // No labels yet: no label filter.
+    assert!(
+        !moons.body.contains(r#"<section aria-label="Label">"#),
+        "{}",
+        moons.body
+    );
+    let shown = |body: &str| {
+        (
+            body.contains("Jita IV - Moon 4"),
+            body.contains("Jita IV - Moon 6"),
+        )
+    };
+    let by = |q: String| {
+        let all = all.clone();
+        let owner = owner.clone();
+        let h = &h;
+        async move { page(h, &format!("{all}&{q}"), &owner).await.body }
+    };
+    assert_eq!(shown(&by(format!("ore={XENOTIME}")).await), (true, false));
+    assert_eq!(shown(&by(format!("ore={SYLVITE}")).await), (false, true));
+    assert_eq!(
+        shown(&by(format!("owner={CHRIBBA_CORP}")).await),
+        (true, false)
+    );
+    assert_eq!(shown(&by("region=10000002".into()).await), (true, true));
+    assert_eq!(shown(&by("region=10000001".into()).await), (false, false));
+
+    // Labels: made on Settings → Labels by holders of manage.
+    let labels = page(&h, &format!("/plugins/{ID}/settings/labels"), &owner).await;
+    assert_eq!(labels.status, StatusCode::OK, "{}", labels.body);
+    assert!(labels.body.contains("No labels yet."), "{}", labels.body);
+    assert!(
+        labels
+            .body
+            .contains(&format!(r#"href="/plugins/{ID}/settings/labels""#)),
+        "{}",
+        labels.body
+    );
+    let res = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/settings/labels"),
+            "_form=save_label&name=Jackpot+zone&description=Big+ones&style=danger",
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let label: i32 =
+        sqlx::query_scalar(r#"SELECT id FROM "plugin_tether.moon-mining".labels WHERE name = $1"#)
+            .bind("Jackpot zone")
+            .fetch_one(&h.db)
+            .await
+            .unwrap();
+    // Put on a moon from its page.
+    let moon = page(&h, &format!("/plugins/{ID}/moon/40009081"), &owner).await;
+    assert!(moon.body.contains("Save label"), "{}", moon.body);
+    let res = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/moon/40009081"),
+            &format!("_form=moon_label&label={label}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let moon = page(&h, &format!("/plugins/{ID}/moon/40009081"), &owner).await;
+    assert!(moon.body.contains("Jackpot zone"), "{}", moon.body);
+    // On Moons, and as a filter.
+    let moons = page(&h, &all, &owner).await;
+    assert!(moons.body.contains("Jackpot zone"), "{}", moons.body);
+    assert!(
+        moons.body.contains(r#"<section aria-label="Label">"#),
+        "{}",
+        moons.body
+    );
+    assert_eq!(shown(&by(format!("label={label}")).await), (true, false));
+
+    // Someone without manage can't label a moon, nor make labels.
+    grant(&h, &owner, "basic_access", BLUE_STATE).await;
+    grant(&h, &owner, "view_all_moons", BLUE_STATE).await;
+    let blue = log_in_as(&h, "1887431749:gigX", None).await;
+    let theirs = page(&h, &format!("/plugins/{ID}/moon/40009081"), &blue).await;
+    assert_eq!(theirs.status, StatusCode::OK, "{}", theirs.body);
+    assert!(theirs.body.contains("Jackpot zone"), "{}", theirs.body);
+    assert!(!theirs.body.contains("Save label"), "{}", theirs.body);
+    let refused = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/moon/40009083"),
+            &format!("_form=moon_label&label={label}"),
+            &blue,
+        ),
+    )
+    .await;
+    assert_ne!(refused.status, StatusCode::SEE_OTHER, "{}", refused.body);
+    assert_eq!(
+        page(&h, &format!("/plugins/{ID}/settings/labels"), &blue)
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+
+    // Deleted: off its moons.
+    let res = send(
+        &h.app,
+        form(
+            &format!("/plugins/{ID}/settings/labels"),
+            &format!("_form=delete_label&label={label}"),
+            &owner,
+        ),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::SEE_OTHER, "{}", res.body);
+    let moon = page(&h, &format!("/plugins/{ID}/moon/40009081"), &owner).await;
+    assert!(!moon.body.contains("Jackpot zone"), "{}", moon.body);
 }

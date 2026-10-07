@@ -1268,6 +1268,12 @@ HTTP 303
 [Asserts]
 header "Location" == "/login"
 
+# Moon Mining's labels (aa-moonmining's), for its managers.
+GET {{base}}/plugins/tether.moon-mining/settings/labels
+HTTP 303
+[Asserts]
+header "Location" == "/login"
+
 # Tether's own pages in every app's space, under its Manage.
 GET {{base}}/plugins/tether.moon-mining/data-sources
 HTTP 303
