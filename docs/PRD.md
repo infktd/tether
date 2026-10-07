@@ -346,7 +346,7 @@ Phase 5, release 1.0:
 - [ ] Freight: the All contracts tab (aa-freight `freight/templates/freight/contracts_all.html`, `freight/managers.py:258-261`)
 - [ ] Freight: Discord cards linking to the app's contracts (aa-freight `freight/models/contracts.py:335-341`)
 - [x] Fleet Activity Tracking: ESI-tracked links that don't expire, tracked until the fleet ends (aa-afat `afat/views/fatlinks.py:366-377`, `afat/tasks.py:335-346`). Built: a tracked link has no expiry ("Closes: When the fleet ends"), stays open while it tracks, and closes when tracking stops; its FC resumes it unless it was closed by hand. The six-hour cap stays
-- [ ] Fleet Activity Tracking: the fleet snapshot, FATs from the pasted fleet composition (aa-afat `afat/forms.py:193-201`, `afat/views/fatlinks.py:806-915`)
+- [x] Fleet Activity Tracking: the fleet snapshot, FATs from the pasted fleet composition (aa-afat `afat/forms.py:193-201`, `afat/views/fatlinks.py:806-915`). Built: a Fleet snapshot tab on the link's page under the manual FAT rules; every pasted pilot EVE knows gets a FAT with ship and system, one look-up for the names, logged; bad lines and unknown pilots named
 - [ ] Fleet Activity Tracking: `manage_afat` opens every corporation's and alliance's statistics and Logs (aa-afat `afat/views/statistics.py:66-69`, `afat/views/logs.py:23`)
 - [ ] Fleet Activity Tracking: tracking stops only after 3 identical ESI errors within 75 seconds (aa-afat `afat/tasks.py:33-34`, `:169-201`)
 - [ ] HR Applications: the applicant told when their application is taken, approved, rejected or deleted (AA core `hrapplications/views.py:152`, `:166`, `:182`, `:241`; needs the host's notify to reach the applicant)

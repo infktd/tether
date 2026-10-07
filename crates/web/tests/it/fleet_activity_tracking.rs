@@ -2167,3 +2167,142 @@ async fn aa_afat_settings_and_rules(db: PgPool) {
     assert!(logs.body.contains("Settings Changed"), "{}", logs.body);
     no_problems(&plugin_problems(&h).await);
 }
+
+// ---- the fleet snapshot ------------------------------------------------------
+
+fn encode(text: &str) -> String {
+    text.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'.' | b'-' | b'_' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// A line of EVE's fleet window, copied.
+fn fleet_line(name: &str, ship: &str) -> String {
+    format!("{name}\tJita\t{ship}\tBattleship\tSquad Member\t0 - 0 - 5\tWing 1 / Squad 1\n")
+}
+
+/// aa-afat's fleet snapshot: an FC pastes the fleet composition and every
+/// pilot EVE knows gets a FAT with ship and system, under the manual FAT
+/// rules, logged.
+#[sqlx::test(migrator = "tether_db::MIGRATOR")]
+async fn a_fleet_snapshot_adds_fats(db: PgPool) {
+    let (h, owner, _) = setup(db).await;
+    Mock::given(method("POST"))
+        .and(path("/universe/ids"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "characters": [
+                { "id": LINE, "name": "Line Member" },
+                { "id": ALT, "name": "Line Alt" },
+                { "id": GIGX, "name": "gigX" },
+            ],
+            "systems": [{ "id": JITA, "name": "Jita" }],
+            "inventory_types": [{ "id": ROKH, "name": "Rokh" }],
+        })))
+        .with_priority(1)
+        .mount(&h.esi_server)
+        .await;
+    let hash = create_link(&h, &owner, "Snapshot fleet", "").await;
+    // The link's page: its own, Edit, Add FAT, Fleet snapshot.
+    let details = open(&h, &format!("links/{hash}?_tab=3"), &owner).await;
+    assert!(
+        details.body.contains("Add fleet snapshot"),
+        "{}",
+        details.body
+    );
+
+    // Something else pasted is refused, saying where.
+    let res = post(
+        &h,
+        &format!("links/{hash}"),
+        &format!("_form=snapshot&composition={}", encode("Hello fleet")),
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(res.body.contains("Line 1 "), "{}", res.body);
+    assert!(fats(&h, &hash).await.is_empty());
+
+    let paste = format!(
+        "{}{}{}",
+        fleet_line("Line Member", "Rokh"),
+        fleet_line("line alt", "Rokh"),
+        fleet_line("Nobody Here", "Rokh"),
+    );
+    let res = post(
+        &h,
+        &format!("links/{hash}"),
+        &format!("_form=snapshot&composition={}", encode(&paste)),
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.body);
+    assert!(
+        res.body.contains("Fleet snapshot: 2 FATs added."),
+        "{}",
+        res.body
+    );
+    assert!(res.body.contains("Nobody Here"), "{}", res.body);
+    assert_eq!(
+        fats(&h, &hash).await,
+        vec![
+            (ALT, Some("Chribba".to_owned())),
+            (LINE, Some("Chribba".to_owned()))
+        ]
+    );
+    let rokh = (Some(ROKH), Some(JITA), false);
+    assert_eq!(
+        esi_fats(&h, &hash).await,
+        vec![(ALT, rokh.0, rokh.1, false), (LINE, rokh.0, rokh.1, false)]
+    );
+    let details = open(&h, &format!("links/{hash}"), &owner).await;
+    assert!(details.body.contains("Rokh"), "{}", details.body);
+    assert!(details.body.contains("Line Alt"), "{}", details.body);
+
+    // Again with gigX: only he's new.
+    let paste = format!("{paste}{}", fleet_line("gigX", "Rokh"));
+    let res = post(
+        &h,
+        &format!("links/{hash}"),
+        &format!("_form=snapshot&composition={}", encode(&paste)),
+        &owner,
+    )
+    .await;
+    assert!(
+        res.body
+            .contains("Fleet snapshot: 1 FAT added. 2 already had one."),
+        "{}",
+        res.body
+    );
+    assert_eq!(fats(&h, &hash).await.len(), 3);
+    let logs = open(&h, "logs", &owner).await;
+    assert!(logs.body.contains("Fleet Snapshot"), "{}", logs.body);
+    assert!(
+        logs.body.contains("Fleet snapshot added 2 FATs"),
+        "{}",
+        logs.body
+    );
+
+    // Not once the link's been reopened (aa-afat's manual FAT rule).
+    let schema = schema(&h).await;
+    sqlx::query(sql!(
+        "UPDATE \"{schema}\".links SET reopened = 1 WHERE hash = $1"
+    ))
+    .bind(&hash)
+    .execute(&h.db)
+    .await
+    .unwrap();
+    let details = open(&h, &format!("links/{hash}"), &owner).await;
+    assert!(!details.body.contains("Fleet snapshot"), "{}", details.body);
+    let res = post(
+        &h,
+        &format!("links/{hash}"),
+        &format!("_form=snapshot&composition={}", encode(&paste)),
+        &owner,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.body);
+    no_problems(&plugin_problems(&h).await);
+}

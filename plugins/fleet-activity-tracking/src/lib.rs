@@ -18,6 +18,9 @@
 //! - **Statistics** per pilot, corporation and alliance, by month, behind
 //!   aa-afat's permissions.
 //! - **Logs** of what FCs and managers did, kept for the settings' days.
+//! - **Fleet snapshot** (aa-afat's): within the manual FAT window, an FC
+//!   pastes the fleet composition from EVE's fleet window, and everyone in
+//!   it gets a FAT, with ship and system.
 //! - **ESI-tracked fleets** (aa-afat's): a link can follow the fleet an FC's
 //!   character is boss of, adding a FAT (with ship and system) for everyone
 //!   in it. As in aa-afat, the FC logs in with the fleet boss from Create
@@ -72,6 +75,11 @@ const TRACK_CAP: Duration = Duration::hours(6);
 const TRACKED_PER_RUN: i64 = 40;
 /// Who the log says stopped tracking when the job did.
 const TRACKER: &str = "ESI fleet tracking";
+
+/// Names one `universe-ids` call takes (ESI's limit).
+const MAX_NAMES: usize = 500;
+
+mod snapshot;
 
 const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -1280,6 +1288,22 @@ fn details_page(viewer: &Viewer, hash: &str, note: Option<&str>) -> Result<Page,
                     ),
             )],
         );
+        // aa-afat's fleet snapshot, under the same rules.
+        page = page.tab(
+            "Fleet snapshot",
+            vec![Section::Form(
+                Form::new("snapshot", "Add fleet snapshot")
+                    .description(
+                        "Copy the fleet composition from your fleet window in EVE and paste it \
+                         here: everyone in it gets a FAT, with ship and system. This is logged.",
+                    )
+                    .field(
+                        Field::textarea("composition", "Fleet composition", SNAPSHOT_LENGTH)
+                            .help("One pilot a line, as the fleet window copies them.")
+                            .required(),
+                    ),
+            )],
+        );
     } else {
         page = page.text(format!(
             "FATs can be added by hand only within {MANUAL_FAT_HOURS} hours of the link's \
@@ -1552,6 +1576,7 @@ fn change_link(
             Ok(back())
         }
         "add_fat" => add_fat(viewer, &link, submission.value("character").trim()),
+        "snapshot" => fleet_snapshot(viewer, &link, submission.value("composition")),
         "remove_fat" | "remove_by_name" if manage => {
             // The next read of the fleet would add it straight back.
             if link.esi.as_ref().is_some_and(|e| e.tracking) {
@@ -1707,6 +1732,204 @@ fn add_fat(viewer: &Viewer, link: &LinkInfo, who: &str) -> Result<SubmitResult, 
         alliance.unwrap_or_default(),
     ]);
     Ok(SubmitResult::Redirect(format!("links/{}", link.hash)))
+}
+
+/// The longest fleet composition taken: a full fleet's lines, generously.
+const SNAPSHOT_LENGTH: u32 = 100_000;
+
+/// What `universe-ids` found: each name, lowercased, to its id and its name
+/// as EVE writes it, by kind.
+#[derive(Default)]
+struct Found {
+    characters: std::collections::BTreeMap<String, (i64, String)>,
+    systems: std::collections::BTreeMap<String, (i64, String)>,
+    ships: std::collections::BTreeMap<String, (i64, String)>,
+}
+
+/// Exact names to ids with ESI's public `/universe/ids`, 500 a call.
+fn universe_ids(names: &[String]) -> Result<Found, esi::Error> {
+    let mut found = Found::default();
+    for chunk in names.chunks(MAX_NAMES) {
+        let answer = esi::get(
+            "universe-ids",
+            Subject::Character(0),
+            &[("names".to_owned(), chunk.join("\n"))],
+            None,
+        )?;
+        let body: serde_json::Value = serde_json::from_str(&answer.body).unwrap_or_default();
+        for (key, into) in [
+            ("characters", &mut found.characters),
+            ("systems", &mut found.systems),
+            ("inventory_types", &mut found.ships),
+        ] {
+            for item in body[key].as_array().into_iter().flatten() {
+                if let (Some(id), Some(name)) = (item["id"].as_i64(), item["name"].as_str())
+                    && id > 0
+                {
+                    into.insert(name.to_lowercase(), (id, name.to_owned()));
+                }
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// aa-afat's fleet snapshot: a FAT for every pilot in a pasted fleet
+/// composition, with ship and system, under the manual FAT rules (within
+/// 24 hours of the link's creation, before it's reopened). Pilots EVE
+/// doesn't know are left out and named; one already on the link is left
+/// alone.
+fn fleet_snapshot(
+    viewer: &Viewer,
+    link: &LinkInfo,
+    composition: &str,
+) -> Result<SubmitResult, PageError> {
+    let back = |note: &str| -> Result<SubmitResult, PageError> {
+        Ok(SubmitResult::Page(details_page(
+            viewer,
+            &link.hash,
+            Some(note),
+        )?))
+    };
+    if !link.manual {
+        return back(&format!(
+            "FATs can be added by hand only within {MANUAL_FAT_HOURS} hours of the link's \
+             creation and before it's reopened."
+        ));
+    }
+    let members = match snapshot::parse(composition) {
+        Ok(members) => members,
+        Err(why) => return back(&why),
+    };
+    let mut names: Vec<String> = Vec::new();
+    for member in &members {
+        for name in [&member.name, &member.system, &member.ship] {
+            if !name.is_empty()
+                && name.chars().count() <= 100
+                && !names.iter().any(|n| n.eq_ignore_ascii_case(name))
+            {
+                names.push(name.clone());
+            }
+        }
+    }
+    let found = match universe_ids(&names) {
+        Ok(found) => found,
+        Err(err) => {
+            log::warn(format!("universe-ids for a fleet snapshot: {err:?}"));
+            return back("ESI couldn't look up the pilots just now. Try again shortly.");
+        }
+    };
+    let mut rows = Vec::new();
+    let mut unknown = Vec::new();
+    for member in &members {
+        let Some((id, name)) = found.characters.get(&member.name.to_lowercase()) else {
+            unknown.push(member.name.clone());
+            continue;
+        };
+        let id_of = |map: &std::collections::BTreeMap<String, (i64, String)>, name: &str| {
+            map.get(&name.to_lowercase()).map(|(id, _)| *id)
+        };
+        rows.push((
+            *id,
+            name.clone(),
+            id_of(&found.systems, &member.system),
+            id_of(&found.ships, &member.ship),
+        ));
+    }
+    // Who each flies for now (ESI's public affiliation), else what the app
+    // last saw.
+    let affiliated = affiliations(&rows.iter().map(|r| r.0).collect::<Vec<_>>());
+    let json: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|(id, name, system, ship)| {
+            let (corporation, alliance) = affiliated
+                .iter()
+                .find(|a| a.0 == *id)
+                .map_or((None, None), |a| (Some(a.1), a.2));
+            serde_json::json!({
+                "character_id": id, "character_name": name, "system_id": system,
+                "ship_type_id": ship, "corporation_id": corporation, "alliance_id": alliance,
+            })
+        })
+        .collect();
+    // Names for the attendees table: the pilots, systems and ships just
+    // looked up.
+    let named: Vec<serde_json::Value> = [
+        (&found.characters, "character"),
+        (&found.systems, "solar_system"),
+        (&found.ships, "inventory_type"),
+    ]
+    .into_iter()
+    .flat_map(|(map, category)| {
+        map.values().map(
+            move |(id, name)| serde_json::json!({ "id": id, "name": name, "category": category }),
+        )
+    })
+    .collect();
+    if let Err(err) = storage::execute(
+        "INSERT INTO names (id, name, category) \
+         SELECT id, name, category FROM json_to_recordset($1::json) AS x(id bigint, name text, category text) \
+         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name",
+        &[Db::json(serde_json::Value::Array(named).to_string())],
+    ) {
+        log::warn(format!("storing names: {err:?}"));
+    }
+    // The FATs and their log entry together, only while the link takes
+    // manual FATs; pilots already on it are left alone.
+    let added = query(
+        "WITH added AS ( \
+             INSERT INTO fats (link_id, character_id, character_name, corporation_id, alliance_id, \
+                               system_id, ship_type_id, added_by) \
+             SELECT l.id, x.character_id, x.character_name, \
+                    coalesce(x.corporation_id, c.corporation_id), \
+                    CASE WHEN x.corporation_id IS NOT NULL THEN x.alliance_id ELSE c.alliance_id END, \
+                    x.system_id, x.ship_type_id, $3 \
+             FROM json_to_recordset($1::json) AS x(character_id bigint, character_name text, \
+                  system_id bigint, ship_type_id bigint, corporation_id bigint, alliance_id bigint) \
+             JOIN links l ON l.id = $2 AND l.reopened = 0 \
+                  AND l.created_at > now() - interval '24 hours' \
+             LEFT JOIN characters c ON c.character_id = x.character_id \
+             ON CONFLICT (link_id, character_id) DO NOTHING \
+             RETURNING corporation_id, alliance_id), \
+         logged AS ( \
+             INSERT INTO logs (event, actor_id, actor_name, link_hash, description) \
+             SELECT 'Fleet Snapshot', $4, $3, $5, \
+                    'Fleet snapshot added ' || n || ' FATs to \"' || $6 || '\"' \
+             FROM (SELECT count(*) AS n FROM added) x WHERE n > 0) \
+         SELECT corporation_id, alliance_id FROM added",
+        &[
+            Db::json(serde_json::Value::Array(json).to_string()),
+            link.id.into(),
+            viewer.main.name.clone().into(),
+            viewer.main.id.into(),
+            link.hash.clone().into(),
+            link.fleet.clone().into(),
+        ],
+    )?;
+    learn_names(
+        &added
+            .iter()
+            .flat_map(|r| [int(r, 0), int(r, 1)])
+            .collect::<Vec<_>>(),
+    );
+    let already = rows.len().saturating_sub(added.len());
+    let mut note = format!(
+        "Fleet snapshot: {} added.",
+        match added.len() {
+            1 => "1 FAT".to_owned(),
+            n => format!("{n} FATs"),
+        }
+    );
+    if already > 0 {
+        note.push_str(&format!(" {already} already had one."));
+    }
+    if !unknown.is_empty() {
+        note.push_str(&format!(
+            " EVE knows no pilot called {}.",
+            unknown.join(", ")
+        ));
+    }
+    back(&note)
 }
 
 /// The page members open from the FC's link. `unregistered`: a character
